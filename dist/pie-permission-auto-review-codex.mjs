@@ -1423,6 +1423,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	let generation;
 	let registrationRole = "pending";
 	let ownedService;
+	let registeredService;
 	function createInvalidConfigReviewer() {
 		return async (details, _query, log) => {
 			log.review("auto_review.decision", {
@@ -1469,6 +1470,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	function releaseRegistration() {
 		if (ownedService !== void 0) clearRegistrationOwnership(ownedService, ownerToken);
 		ownedService = void 0;
+		registeredService = void 0;
 		registrationRole = "pending";
 	}
 	function cleanupGeneration(target) {
@@ -1483,9 +1485,15 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		}
 	}
 	function tryRegister() {
-		if (generation === void 0 || generation.dispose !== void 0 || registrationRole === "passive") return;
+		if (generation === void 0 || registrationRole === "passive") return;
 		const service = getPermissionsService$1();
 		if (service === void 0) return;
+		if (generation.dispose !== void 0 && registeredService !== service) {
+			generation.dispose();
+			generation.dispose = void 0;
+			releaseRegistration();
+		}
+		if (generation.dispose !== void 0) return;
 		const ownership = getRegistrationOwnership();
 		if (ownership?.service === service) {
 			if (ownership.ownerToken === ownerToken) {
@@ -1496,6 +1504,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		}
 		try {
 			generation.dispose = service.registerAuthorizer(AUTHORIZER_NAME, generation.authorize);
+			registeredService = service;
 			claimRegistration(service);
 		} catch (error) {
 			warn(`failed to register ${AUTHORIZER_NAME}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1570,12 +1579,14 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		}
 		try {
 			candidate.dispose = service.registerAuthorizer(AUTHORIZER_NAME, candidate.authorize);
+			registeredService = service;
 			claimRegistration(service);
 		} catch (error) {
 			candidate.controller.abort();
 			const registrationMessage = error instanceof Error ? error.message : String(error);
 			try {
 				current.dispose = service.registerAuthorizer(AUTHORIZER_NAME, current.authorize);
+				registeredService = service;
 				claimRegistration(service);
 			} catch (restoreError) {
 				releaseRegistration();

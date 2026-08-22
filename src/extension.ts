@@ -93,6 +93,10 @@ function installAutoReviewExtension(
   let generation: ReviewerGeneration | undefined
   let registrationRole: RegistrationRole = 'pending'
   let ownedService: PermissionsService | undefined
+  // The permission service can be replaced during a Pi reload while the
+  // reviewer generation survives. Keep the service paired with its disposer
+  // so a disposer from the old service never prevents re-registration.
+  let registeredService: PermissionsService | undefined
 
   function createInvalidConfigReviewer(): Authorizer['authorize'] {
     return async (details, _query, log) => {
@@ -149,6 +153,7 @@ function installAutoReviewExtension(
       clearRegistrationOwnership(ownedService, ownerToken)
     }
     ownedService = undefined
+    registeredService = undefined
     registrationRole = 'pending'
   }
 
@@ -168,11 +173,23 @@ function installAutoReviewExtension(
   }
 
   function tryRegister(): void {
-    if (generation === undefined || generation.dispose !== undefined || registrationRole === 'passive') {
+    if (generation === undefined || registrationRole === 'passive') {
       return
     }
     const service = getPermissionsService()
     if (service === undefined) {
+      return
+    }
+
+    // A reload may publish a new service without restarting this extension.
+    // The old disposer is valid only for the old service. Dispose it first,
+    // then register the current generation with the replacement service.
+    if (generation.dispose !== undefined && registeredService !== service) {
+      generation.dispose()
+      generation.dispose = undefined
+      releaseRegistration()
+    }
+    if (generation.dispose !== undefined) {
       return
     }
 
@@ -189,6 +206,7 @@ function installAutoReviewExtension(
 
     try {
       generation.dispose = service.registerAuthorizer(AUTHORIZER_NAME, generation.authorize)
+      registeredService = service
       claimRegistration(service)
     } catch (error) {
       warn(`failed to register ${AUTHORIZER_NAME}: ${error instanceof Error ? error.message : String(error)}`)
@@ -269,12 +287,14 @@ function installAutoReviewExtension(
 
     try {
       candidate.dispose = service.registerAuthorizer(AUTHORIZER_NAME, candidate.authorize)
+      registeredService = service
       claimRegistration(service)
     } catch (error) {
       candidate.controller.abort()
       const registrationMessage = error instanceof Error ? error.message : String(error)
       try {
         current.dispose = service.registerAuthorizer(AUTHORIZER_NAME, current.authorize)
+        registeredService = service
         claimRegistration(service)
       } catch (restoreError) {
         releaseRegistration()
