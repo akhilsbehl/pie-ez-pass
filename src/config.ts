@@ -4,13 +4,13 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
-export const EXTENSION_ID = 'pi-permission-auto-review'
+export const EXTENSION_ID = 'pie-permission-auto-review-codex'
 export const AUTHORIZER_NAME = 'auto-review'
 export const DEFAULT_PROVIDER = 'openai-codex'
 export const DEFAULT_MODEL = 'codex-auto-review'
 export const DEFAULT_TIMEOUT_MS = 90_000
 export const CONFIG_SCHEMA_URL =
-  'https://raw.githubusercontent.com/mzwing/pi-packages/main/packages/pi-permission-auto-review/schemas/config.schema.json'
+  'https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json'
 
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 

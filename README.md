@@ -1,6 +1,6 @@
-# @mzwing/pi-permission-auto-review
+# pie-permission-auto-review-codex
 
-[![npm version](https://img.shields.io/npm/v/@mzwing/pi-permission-auto-review?style=flat&logo=npm&logoColor=white)](https://www.npmjs.com/package/@mzwing/pi-permission-auto-review) [![CI](https://img.shields.io/github/actions/workflow/status/mzwing/pi-packages/release.yml?style=flat&logo=github&label=CI)](https://github.com/mzwing/pi-packages/actions/workflows/release.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Pi Package](https://img.shields.io/badge/Pi-Package-6366F1?style=flat)](https://github.com/earendil-works/pi)
+[![npm version](https://img.shields.io/npm/v/pie-permission-auto-review-codex?style=flat&logo=npm&logoColor=white)](https://github.com/akhilsbehl/pie-permission-auto-review-codex) [![CI](https://img.shields.io/github/actions/workflow/status/akhilsbehl/pie-permission-auto-review-codex/release.yml?style=flat&logo=github&label=CI)](https://github.com/akhilsbehl/pie-permission-auto-review-codex/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Pi Package](https://img.shields.io/badge/Pi-Package-6366F1?style=flat)](https://github.com/earendil-works/pi)
 
 A [Pi](https://github.com/earendil-works/pi) extension that adds Codex-style automatic permission reviews to [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system).
 
@@ -14,7 +14,7 @@ Ours is mostly specialized for OpenAI's `codex-auto-review` model, which is trai
 
 ```bash
 pi install npm:@gotgenes/pi-permission-system # dependency
-pi install npm:@mzwing/pi-permission-auto-review
+Load the local package from the `configs` submodule path
 ```
 
 This fork targets the Node.js version supported by the current Pi installation (`>=22.19.0`). Provider lookup compatibility is implemented locally; no polyfill package is required.
@@ -49,8 +49,8 @@ Extension config can be omitted. The defaults are:
 
 | Scope   | Path                                                           |
 | ------- | -------------------------------------------------------------- |
-| Global  | `~/.pi/agent/extensions/pi-permission-auto-review/config.json` |
-| Project | `<cwd>/.pi/extensions/pi-permission-auto-review/config.json`   |
+| Global  | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json` |
+| Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json`   |
 
 Project fields override global fields. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set.
 
@@ -86,3 +86,7 @@ Custom providers and models must be defined in Pi's `~/.pi/agent/models.json`, t
 ## License
 
 [MIT](LICENSE)
+
+## Attribution
+
+This project is an Akhil-owned personal-use adaptation of the MIT-licensed `pi-permission-auto-review` package from [mzwing/pi-packages](https://github.com/mzwing/pi-packages/tree/main/packages/pi-permission-auto-review). See `LICENSE` and `package.json` for attribution.

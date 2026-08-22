@@ -2,12 +2,12 @@ import { Authorizer, PermissionsService } from "@gotgenes/pi-permission-system";
 import { z } from "zod";
 import { ExtensionAPI, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
 //#region src/config.d.ts
-declare const EXTENSION_ID = "pi-permission-auto-review";
+declare const EXTENSION_ID = "pie-permission-auto-review-codex";
 declare const AUTHORIZER_NAME = "auto-review";
 declare const DEFAULT_PROVIDER = "openai-codex";
 declare const DEFAULT_MODEL = "codex-auto-review";
 declare const DEFAULT_TIMEOUT_MS = 90000;
-declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/mzwing/pi-packages/main/packages/pi-permission-auto-review/schemas/config.schema.json";
+declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json";
 type AutoReviewConfigSchema = z.ZodObject<{
   $schema: z.ZodOptional<z.ZodString>;
   additionalPolicy: z.ZodOptional<z.ZodString>;

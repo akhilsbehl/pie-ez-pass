@@ -545,7 +545,7 @@ function getArgumentCompletions(
 
 export function registerAutoReviewCommand(pi: ExtensionAPI, controller: AutoReviewCommandController): void {
   pi.registerCommand(COMMAND_NAME, {
-    description: 'Configure pi-permission-auto-review without reloading the Pi session',
+    description: 'Configure pie-permission-auto-review-codex without reloading the Pi session',
     getArgumentCompletions,
     handler: async (args, ctx) => {
       const normalized = args.trim().toLowerCase()

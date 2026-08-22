@@ -33,12 +33,12 @@ var DenialCircuitBreaker = class {
 };
 //#endregion
 //#region src/config.ts
-const EXTENSION_ID = "pi-permission-auto-review";
+const EXTENSION_ID = "pie-permission-auto-review-codex";
 const AUTHORIZER_NAME = "auto-review";
 const DEFAULT_PROVIDER = "openai-codex";
 const DEFAULT_MODEL = "codex-auto-review";
 const DEFAULT_TIMEOUT_MS = 9e4;
-const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/mzwing/pi-packages/main/packages/pi-permission-auto-review/schemas/config.schema.json";
+const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json";
 const REASONING_LEVELS = [
 	"off",
 	"minimal",
@@ -559,7 +559,7 @@ function getArgumentCompletions(argumentPrefix) {
 }
 function registerAutoReviewCommand(pi, controller) {
 	pi.registerCommand(COMMAND_NAME, {
-		description: "Configure pi-permission-auto-review without reloading the Pi session",
+		description: "Configure pie-permission-auto-review-codex without reloading the Pi session",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const normalized = args.trim().toLowerCase();
@@ -1396,7 +1396,7 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 }
 //#endregion
 //#region src/extension.ts
-const REGISTRATION_OWNERSHIP_KEY = Symbol.for("@mzwing/pi-permission-auto-review:registration");
+const REGISTRATION_OWNERSHIP_KEY = Symbol.for("@mzwing/pie-permission-auto-review-codex:registration");
 const PASSIVE_CONFIG_MESSAGE = "the auto-review authorizer is managed by the main Pi session; change its configuration there";
 function getRegistrationOwnership() {
 	return globalThis[REGISTRATION_OWNERSHIP_KEY];

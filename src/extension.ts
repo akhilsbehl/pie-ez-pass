@@ -48,7 +48,7 @@ type RegistrationRole = 'pending' | 'owner' | 'passive'
 // Pi loads extensions through isolated module graphs, while subagents still
 // share one process-global PermissionsService. Symbol.for keeps ownership
 // visible across those module boundaries without involving child lifetimes.
-const REGISTRATION_OWNERSHIP_KEY = Symbol.for('@mzwing/pi-permission-auto-review:registration')
+const REGISTRATION_OWNERSHIP_KEY = Symbol.for('@mzwing/pie-permission-auto-review-codex:registration')
 const PASSIVE_CONFIG_MESSAGE =
   'the auto-review authorizer is managed by the main Pi session; change its configuration there'
 

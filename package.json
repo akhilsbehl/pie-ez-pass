@@ -1,5 +1,5 @@
 {
-  "name": "pi-permission-auto-review",
+  "name": "pie-permission-auto-review-codex",
   "version": "0.1.4",
   "description": "Codex-style automatic approval reviews for @gotgenes/pi-permission-system",
   "keywords": [
@@ -12,19 +12,17 @@
     "pi-extension",
     "pi-package"
   ],
-  "homepage": "https://github.com/mzwing/pi-packages/tree/main/packages/pi-permission-auto-review#readme",
+  "homepage": "https://github.com/akhilsbehl/pie-permission-auto-review-codex#readme",
   "bugs": {
-    "url": "https://github.com/mzwing/pi-packages/issues"
+    "url": "https://github.com/akhilsbehl/pie-permission-auto-review-codex/issues"
   },
   "license": "MIT",
   "author": {
-    "name": "mzwing",
-    "email": "mzwing@mzwing.eu.org"
+    "name": "Akhil Behl"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mzwing/pi-packages.git",
-    "directory": "packages/pi-permission-auto-review"
+    "url": "git+https://github.com/akhilsbehl/pie-permission-auto-review-codex.git"
   },
   "files": [
     "dist",
@@ -35,12 +33,12 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/pi-permission-auto-review.mjs",
-  "types": "./dist/pi-permission-auto-review.d.mts",
+  "main": "./dist/pie-permission-auto-review-codex.mjs",
+  "types": "./dist/pie-permission-auto-review-codex.d.mts",
   "exports": {
     ".": {
-      "types": "./dist/pi-permission-auto-review.d.mts",
-      "import": "./dist/pi-permission-auto-review.mjs"
+      "types": "./dist/pie-permission-auto-review-codex.d.mts",
+      "import": "./dist/pie-permission-auto-review-codex.mjs"
     }
   },
   "publishConfig": {
@@ -69,14 +67,20 @@
   },
   "pi": {
     "extensions": [
-      "./dist/pi-permission-auto-review.mjs"
+      "./dist/pie-permission-auto-review-codex.mjs"
     ]
   },
   "scripts": {
-    "build": "tsdown --clean && mv dist/index.mjs dist/pi-permission-auto-review.mjs && mv dist/index.d.mts dist/pi-permission-auto-review.d.mts",
+    "build": "tsdown --clean && mv dist/index.mjs dist/pie-permission-auto-review-codex.mjs && mv dist/index.d.mts dist/pie-permission-auto-review-codex.d.mts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "gen:schema": "node --experimental-strip-types scripts/generate-schema.ts"
-  }
+  },
+  "contributors": [
+    {
+      "name": "mzwing",
+      "email": "mzwing@mzwing.eu.org"
+    }
+  ]
 }
