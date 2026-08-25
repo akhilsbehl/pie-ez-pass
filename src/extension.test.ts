@@ -102,15 +102,15 @@ describe('standalone tool-call permission boundary', () => {
     expect(context.ui.confirm).not.toHaveBeenCalled()
   })
 
-  it('escalates after the fourth redirect in one turn', async () => {
+  it('escalates after the third redirect in one negotiation', async () => {
     const { pi } = startExtension('redirect')
     const context = makeContext(true)
     const handler = pi.handlers.get('tool_call')
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       await handler?.({ ...toolCall, toolCallId: `request-${attempt}` }, context)
     }
-    const result = await handler?.({ ...toolCall, toolCallId: 'request-4' }, context)
+    const result = await handler?.({ ...toolCall, toolCallId: 'request-3' }, context)
 
     expect(result).toEqual({})
     expect(context.ui.confirm).toHaveBeenCalledTimes(1)
@@ -123,11 +123,11 @@ describe('standalone tool-call permission boundary', () => {
     const handler = pi.handlers.get('tool_call')
     const turnStart = pi.handlers.get('turn_start')
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       await handler?.({ ...toolCall, toolCallId: `request-${attempt}` }, context)
       turnStart?.()
     }
-    const result = await handler?.({ ...toolCall, toolCallId: 'request-4' }, context)
+    const result = await handler?.({ ...toolCall, toolCallId: 'request-3' }, context)
 
     expect(result).toEqual({})
     expect(context.ui.confirm).toHaveBeenCalledTimes(1)

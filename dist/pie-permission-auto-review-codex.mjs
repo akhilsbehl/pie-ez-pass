@@ -5608,7 +5608,7 @@ const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"edit",
 	"write"
 ]);
-const MAX_REDIRECTIONS_PER_NEGOTIATION = 3;
+const MAX_REDIRECTIONS_PER_NEGOTIATION = 2;
 const reviewLog = {
 	review: () => void 0,
 	debug: () => void 0
@@ -5711,7 +5711,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 				reason: `Automatic review requires a narrower action: ${verdict.message}`
 			};
 		}
-		if (verdict.kind === "redirect") details.message = `${details.message}\n\nThe model proposed a narrower alternative three times without resolving the request.\nSuggested alternative: ${verdict.message}`;
+		if (verdict.kind === "redirect") details.message = `${details.message}\n\nThe model proposed a narrower alternative twice without resolving the request.\nSuggested alternative: ${verdict.message}`;
 		if (!context.hasUI) {
 			redirectionsInNegotiation = 0;
 			return {

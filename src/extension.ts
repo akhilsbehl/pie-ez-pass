@@ -37,7 +37,7 @@ interface SessionRuntime {
 }
 
 const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
-const MAX_REDIRECTIONS_PER_NEGOTIATION = 3
+const MAX_REDIRECTIONS_PER_NEGOTIATION = 2
 
 function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.
@@ -183,7 +183,7 @@ function installAutoReviewExtension(
     }
 
     if (verdict.kind === 'redirect') {
-      details.message = `${details.message}\n\nThe model proposed a narrower alternative three times without resolving the request.\nSuggested alternative: ${verdict.message}`
+      details.message = `${details.message}\n\nThe model proposed a narrower alternative twice without resolving the request.\nSuggested alternative: ${verdict.message}`
     }
 
     if (!context.hasUI) {

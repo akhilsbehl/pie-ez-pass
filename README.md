@@ -10,7 +10,7 @@ The extension uses Pi's native `tool_call` hook. It does not depend on or regist
 
 - The reviewer can `allow` a call. Pi executes it without a prompt.
 - The reviewer can `redirect` a call. The tool is blocked and the main model receives a concrete narrower instruction.
-- After three redirects in one negotiation, the next redirect escalates to the user.
+- After two redirects in one negotiation, the third redirect escalates to the user.
 - The reviewer can `escalate` a call. Pi shows its native confirmation dialog.
 - Reviewer failures, invalid responses, timeouts, and unavailable configuration escalate. If no UI is available, the call is blocked.
 - User confirmation applies to that call only. There are no session approvals.
