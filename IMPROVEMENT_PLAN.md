@@ -34,6 +34,7 @@ It raises risk for credential exposure or modification, broad privileges, produc
 - Test the three reviewer outcomes at the reviewer boundary.
 - Test tool filtering, redirect negotiation, escalation, user rejection, and fail-closed behaviour at the Pi `tool_call` boundary.
 - Build the package and keep tracked `dist/` files synchronised.
+- Bundle `zod` into the tracked runtime distribution so a fresh symlinked checkout needs no `node_modules`.
 - Verify the package has no runtime or peer dependency on `@gotgenes/pi-permission-system`.
 
 ## Attribution

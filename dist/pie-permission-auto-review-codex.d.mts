@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { ExtensionAPI, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
+import { z } from "zod";
 //#region src/config.d.ts
 declare const EXTENSION_ID = "pie-permission-auto-review-codex";
 declare const DEFAULT_PROVIDER = "openai-codex";

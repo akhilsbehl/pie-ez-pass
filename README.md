@@ -18,6 +18,8 @@ The extension uses Pi's native `tool_call` hook. It does not depend on or regist
 
 Pi already supplies the required UI through `ctx.ui.confirm`; this package does not install a custom TUI.
 
+The tracked runtime bundle includes its only runtime library dependency, `zod`. A fresh checkout can therefore be loaded directly from a symlink without `node_modules`. The package still declares `zod` for normal npm installation and TypeScript declarations.
+
 ## Install
 
 ```text

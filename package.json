@@ -70,7 +70,7 @@
     ]
   },
   "scripts": {
-    "build": "tsdown --clean && mv dist/index.mjs dist/pie-permission-auto-review-codex.mjs && mv dist/index.d.mts dist/pie-permission-auto-review-codex.d.mts",
+    "build": "tsdown --clean && mv dist/index.mjs dist/pie-permission-auto-review-codex.mjs && mv dist/index.d.mts dist/pie-permission-auto-review-codex.d.mts && sed -i 's/[[:space:]]*$//' dist/pie-permission-auto-review-codex.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
