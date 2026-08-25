@@ -13,7 +13,7 @@ Use this fork as a standalone Pi permission layer rather than as an authorizer f
   - `allow`: execute the exact call;
   - `redirect`: block the call and send a concrete narrower instruction back to the main model;
   - `escalate`: show Pi's native confirmation UI.
-- Allow at most three redirects in one turn. The next redirect escalates.
+- Allow at most three redirects in one negotiation, including across Pi turns. The next redirect escalates.
 - Apply user confirmation to one call only; do not support session approvals.
 - Escalate reviewer failures, invalid responses, timeouts, and internal errors. If confirmation is unavailable, block the call.
 

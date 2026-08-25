@@ -5608,7 +5608,7 @@ const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"edit",
 	"write"
 ]);
-const MAX_REDIRECTIONS_PER_TURN = 3;
+const MAX_REDIRECTIONS_PER_NEGOTIATION = 3;
 const reviewLog = {
 	review: () => void 0,
 	debug: () => void 0
@@ -5662,7 +5662,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	const createReviewer = dependencies.createReviewer ?? ((options) => createPermissionReviewer({ ...options }));
 	let sessionRuntime;
 	let generation;
-	let redirectionsThisTurn = 0;
+	let redirectionsInNegotiation = 0;
 	function createGeneration(config) {
 		if (sessionRuntime === void 0) return;
 		const controller = new AbortController();
@@ -5700,23 +5700,32 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			`${error instanceof Error ? error.message : String(error)}`;
 			verdict = { kind: "escalate" };
 		}
-		if (verdict.kind === "allow") return {};
-		if (verdict.kind === "redirect" && redirectionsThisTurn < MAX_REDIRECTIONS_PER_TURN) {
-			redirectionsThisTurn += 1;
+		if (verdict.kind === "allow") {
+			redirectionsInNegotiation = 0;
+			return {};
+		}
+		if (verdict.kind === "redirect" && redirectionsInNegotiation < MAX_REDIRECTIONS_PER_NEGOTIATION) {
+			redirectionsInNegotiation += 1;
 			return {
 				block: true,
 				reason: `Automatic review requires a narrower action: ${verdict.message}`
 			};
 		}
 		if (verdict.kind === "redirect") details.message = `${details.message}\n\nThe model proposed a narrower alternative three times without resolving the request.\nSuggested alternative: ${verdict.message}`;
-		if (!context.hasUI) return {
-			block: true,
-			reason: "Automatic review could not obtain user confirmation in this Pi mode."
-		};
+		if (!context.hasUI) {
+			redirectionsInNegotiation = 0;
+			return {
+				block: true,
+				reason: "Automatic review could not obtain user confirmation in this Pi mode."
+			};
+		}
 		try {
-			if (await context.ui.confirm("Permission escalation", details.message)) return {};
+			const approved = await context.ui.confirm("Permission escalation", details.message);
+			redirectionsInNegotiation = 0;
+			if (approved) return {};
 		} catch (error) {
 			`${error instanceof Error ? error.message : String(error)}`;
+			redirectionsInNegotiation = 0;
 		}
 		return {
 			block: true,
@@ -5749,12 +5758,12 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		const previous = generation;
 		generation = candidate;
 		previous?.controller.abort();
-		redirectionsThisTurn = 0;
+		redirectionsInNegotiation = 0;
 		return { kind: "active" };
 	}
 	pi.on("session_start", (_event, context) => {
 		generation?.controller.abort();
-		redirectionsThisTurn = 0;
+		redirectionsInNegotiation = 0;
 		sessionRuntime = {
 			registry: context.modelRegistry,
 			sessionManager: context.sessionManager
@@ -5769,14 +5778,12 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		}
 	});
 	pi.on("tool_call", handleToolCall);
-	pi.on("turn_start", () => {
-		redirectionsThisTurn = 0;
-	});
+	pi.on("turn_start", () => {});
 	pi.on("session_shutdown", () => {
 		generation?.controller.abort();
 		generation = void 0;
 		sessionRuntime = void 0;
-		redirectionsThisTurn = 0;
+		redirectionsInNegotiation = 0;
 	});
 	registerAutoReviewCommand(pi, {
 		configStore,

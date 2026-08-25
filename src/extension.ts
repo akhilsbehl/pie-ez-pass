@@ -37,7 +37,7 @@ interface SessionRuntime {
 }
 
 const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
-const MAX_REDIRECTIONS_PER_TURN = 3
+const MAX_REDIRECTIONS_PER_NEGOTIATION = 3
 
 function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.
@@ -113,7 +113,7 @@ function installAutoReviewExtension(
 
   let sessionRuntime: SessionRuntime | undefined
   let generation: ReviewerGeneration | undefined
-  let redirectionsThisTurn = 0
+  let redirectionsInNegotiation = 0
 
   function createGeneration(config: AutoReviewConfig | undefined): ReviewerGeneration | undefined {
     if (sessionRuntime === undefined) {
@@ -170,11 +170,12 @@ function installAutoReviewExtension(
     }
 
     if (verdict.kind === 'allow') {
+      redirectionsInNegotiation = 0
       return {}
     }
 
-    if (verdict.kind === 'redirect' && redirectionsThisTurn < MAX_REDIRECTIONS_PER_TURN) {
-      redirectionsThisTurn += 1
+    if (verdict.kind === 'redirect' && redirectionsInNegotiation < MAX_REDIRECTIONS_PER_NEGOTIATION) {
+      redirectionsInNegotiation += 1
       return {
         block: true,
         reason: `Automatic review requires a narrower action: ${verdict.message}`,
@@ -186,6 +187,7 @@ function installAutoReviewExtension(
     }
 
     if (!context.hasUI) {
+      redirectionsInNegotiation = 0
       return {
         block: true,
         reason: 'Automatic review could not obtain user confirmation in this Pi mode.',
@@ -194,11 +196,13 @@ function installAutoReviewExtension(
 
     try {
       const approved = await context.ui.confirm('Permission escalation', details.message)
+      redirectionsInNegotiation = 0
       if (approved) {
         return {}
       }
     } catch (error) {
       ignoreDiagnostic(`permission confirmation failed: ${error instanceof Error ? error.message : String(error)}`)
+      redirectionsInNegotiation = 0
     }
 
     return { block: true, reason: 'Permission denied by user.' }
@@ -232,13 +236,13 @@ function installAutoReviewExtension(
     const previous = generation
     generation = candidate
     previous?.controller.abort()
-    redirectionsThisTurn = 0
+    redirectionsInNegotiation = 0
     return { kind: 'active' }
   }
 
   pi.on('session_start', (_event, context) => {
     generation?.controller.abort()
-    redirectionsThisTurn = 0
+    redirectionsInNegotiation = 0
     sessionRuntime = {
       registry: context.modelRegistry,
       sessionManager: context.sessionManager,
@@ -257,14 +261,14 @@ function installAutoReviewExtension(
   pi.on('tool_call', handleToolCall)
 
   pi.on('turn_start', () => {
-    redirectionsThisTurn = 0
+    // Redirect negotiations can span multiple Pi turns.
   })
 
   pi.on('session_shutdown', () => {
     generation?.controller.abort()
     generation = undefined
     sessionRuntime = undefined
-    redirectionsThisTurn = 0
+    redirectionsInNegotiation = 0
   })
 
   registerAutoReviewCommand(pi, {

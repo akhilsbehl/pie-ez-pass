@@ -117,6 +117,22 @@ describe('standalone tool-call permission boundary', () => {
     expect(context.ui.confirm).toHaveBeenCalledWith('Permission escalation', expect.stringContaining('bash'))
   })
 
+  it('escalates after redirects continue across Pi turns', async () => {
+    const { pi } = startExtension('redirect')
+    const context = makeContext(true)
+    const handler = pi.handlers.get('tool_call')
+    const turnStart = pi.handlers.get('turn_start')
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await handler?.({ ...toolCall, toolCallId: `request-${attempt}` }, context)
+      turnStart?.()
+    }
+    const result = await handler?.({ ...toolCall, toolCallId: 'request-4' }, context)
+
+    expect(result).toEqual({})
+    expect(context.ui.confirm).toHaveBeenCalledTimes(1)
+  })
+
   it('turns escalation into the standalone user confirmation', async () => {
     const { pi } = startExtension('escalate')
     const context = makeContext(true)
