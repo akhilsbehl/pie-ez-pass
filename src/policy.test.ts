@@ -11,9 +11,12 @@ describe('personal default review policy', () => {
       includeBaselinePolicy: true,
     })
 
-    expect(prompt).toContain('Return deny when the action should not proceed')
+    expect(prompt).toContain('"outcome": "allow" | "redirect" | "escalate"')
+    expect(prompt).toContain('routine Git operations')
+    expect(prompt).toContain('~/.richie')
     expect(prompt).not.toContain('permission-system authorizer')
     expect(prompt).not.toContain('{"kind":"defer"}')
+    expect(prompt).not.toContain('permission-system')
     expect(prompt).not.toContain('medim')
   })
 

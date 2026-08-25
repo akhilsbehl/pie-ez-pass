@@ -2,7 +2,6 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { createAutoReviewExtension } from './extension.js'
 
 export {
-  AUTHORIZER_NAME,
   CONFIG_SCHEMA_URL,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER,

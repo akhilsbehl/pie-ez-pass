@@ -1,11 +1,22 @@
 import { z } from 'zod'
 
-const assessmentPayloadSchema = z.strictObject({
-  risk_level: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-  user_authorization: z.enum(['unknown', 'low', 'medium', 'high']).optional(),
-  outcome: z.enum(['allow', 'deny']),
-  rationale: z.string().trim().min(1).max(4_000).optional(),
-})
+const assessmentPayloadSchema = z
+  .strictObject({
+    risk_level: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    user_authorization: z.enum(['unknown', 'low', 'medium', 'high']).optional(),
+    outcome: z.enum(['allow', 'redirect', 'escalate']),
+    rationale: z.string().trim().min(1).max(4_000).optional(),
+    redirect: z.string().trim().min(1).max(4_000).optional(),
+  })
+  .superRefine((payload, context) => {
+    if (payload.outcome === 'redirect' && payload.redirect === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'redirect is required when outcome is redirect',
+        path: ['redirect'],
+      })
+    }
+  })
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
 type UserAuthorization = 'unknown' | 'low' | 'medium' | 'high'
@@ -13,8 +24,9 @@ type UserAuthorization = 'unknown' | 'low' | 'medium' | 'high'
 export interface ReviewAssessment {
   riskLevel: RiskLevel
   userAuthorization: UserAuthorization
-  outcome: 'allow' | 'deny'
+  outcome: 'allow' | 'redirect' | 'escalate'
   rationale: string
+  redirect?: string
 }
 
 function parseJsonObject(text: string): unknown {
@@ -37,12 +49,15 @@ export function parseReviewAssessment(text: string): ReviewAssessment {
     payload.rationale ??
     (payload.outcome === 'allow'
       ? 'Automatic review returned a low-risk allow decision.'
-      : 'Automatic review returned a deny decision without a rationale.')
+      : payload.outcome === 'redirect'
+        ? 'The requested action should be narrowed before it is attempted.'
+        : 'Automatic review requires direct user confirmation.')
 
   return {
     riskLevel,
     userAuthorization: payload.user_authorization ?? 'unknown',
     outcome: payload.outcome,
     rationale,
+    ...(payload.redirect === undefined ? {} : { redirect: payload.redirect }),
   }
 }

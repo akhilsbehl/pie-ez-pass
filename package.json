@@ -1,7 +1,7 @@
 {
   "name": "pie-permission-auto-review-codex",
   "version": "0.1.4",
-  "description": "Codex-style automatic approval reviews for @gotgenes/pi-permission-system",
+  "description": "Standalone Codex-style permissions for Pi coding agent tool calls",
   "keywords": [
     "authorizer",
     "auto-review",
@@ -51,7 +51,6 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
-    "@gotgenes/pi-permission-system": "20.10.0",
     "@types/node": "26.1.1",
     "tsdown": "0.22.13",
     "typescript": "7.0.2",
@@ -60,8 +59,7 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "^0.80.10 || ^0.81.0",
-    "@earendil-works/pi-coding-agent": "^0.80.10 || ^0.81.0",
-    "@gotgenes/pi-permission-system": "^20.10.0"
+    "@earendil-works/pi-coding-agent": "^0.80.10 || ^0.81.0"
   },
   "engines": {
     "node": ">=22.19.0"

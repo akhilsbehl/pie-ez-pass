@@ -373,7 +373,7 @@ async function openSettingsMenu(ctx: ExtensionCommandContext, controller: AutoRe
       if (activation.kind === 'failed') {
         ctx.ui.notify(`Config saved, but the current reviewer could not be replaced: ${activation.message}`, 'error')
       } else if (activation.kind === 'pending') {
-        ctx.ui.notify('Config saved. It will become active when pi-permission-system is ready.', 'warning')
+        ctx.ui.notify('Config saved. It will become active when the Pi session starts.', 'warning')
       } else {
         ctx.ui.notify('Config saved and applied without reloading the Pi session.', 'info')
       }

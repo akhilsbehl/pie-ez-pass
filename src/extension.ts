@@ -1,36 +1,34 @@
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ModelRegistry,
+  SessionManager,
+  ToolCallEvent,
+  ToolCallEventResult,
+} from '@earendil-works/pi-coding-agent'
 import type { AutoReviewActivationResult } from './command.js'
 import type { AutoReviewConfig, LoadConfigResult } from './config.js'
-import type { ExtensionAPI, ModelRegistry, SessionManager } from '@earendil-works/pi-coding-agent'
-import type { Authorizer, PermissionsService } from '@gotgenes/pi-permission-system'
-import {
-  getPermissionsService as getPublishedPermissionsService,
-  PERMISSIONS_READY_CHANNEL,
-} from '@gotgenes/pi-permission-system'
-import { DenialCircuitBreaker } from './circuit-breaker.js'
 import { registerAutoReviewCommand } from './command.js'
 import { AutoReviewConfigStore } from './config-store.js'
-import { AUTHORIZER_NAME, EXTENSION_ID } from './config.js'
 import { createPermissionReviewer } from './reviewer.js'
+import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 
 interface ReviewerFactoryOptions {
   config: AutoReviewConfig
   registry: ModelRegistry
   sessionManager: Pick<SessionManager, 'buildContextEntries'>
-  circuitBreaker: DenialCircuitBreaker
   sessionSignal: AbortSignal
 }
 
 export interface AutoReviewExtensionDependencies {
   loadConfig?: (cwd: string) => LoadConfigResult
-  getPermissionsService?: () => PermissionsService | undefined
-  createReviewer?: (options: ReviewerFactoryOptions) => Authorizer['authorize']
+  createReviewer?: (options: ReviewerFactoryOptions) => ReviewAuthorizer
 }
 
 interface ReviewerGeneration {
   config: AutoReviewConfig | undefined
   controller: AbortController
-  authorize: Authorizer['authorize']
-  dispose: (() => void) | undefined
+  authorize: ReviewAuthorizer
 }
 
 interface SessionRuntime {
@@ -38,39 +36,66 @@ interface SessionRuntime {
   sessionManager: Pick<SessionManager, 'buildContextEntries'>
 }
 
-interface RegistrationOwnership {
-  service: PermissionsService
-  ownerToken: symbol
+const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
+const MAX_REDIRECTIONS_PER_TURN = 3
+
+function ignoreDiagnostic(_message: string): void {
+  // The extension is silent during normal operation. Escalation is the user-visible boundary.
 }
 
-type RegistrationRole = 'pending' | 'owner' | 'passive'
-
-// Pi loads extensions through isolated module graphs, while subagents still
-// share one process-global PermissionsService. Symbol.for keeps ownership
-// visible across those module boundaries without involving child lifetimes.
-const REGISTRATION_OWNERSHIP_KEY = Symbol.for('@mzwing/pie-permission-auto-review-codex:registration')
-const PASSIVE_CONFIG_MESSAGE =
-  'the auto-review authorizer is managed by the main Pi session; change its configuration there'
-
-function getRegistrationOwnership(): RegistrationOwnership | undefined {
-  return (globalThis as Record<symbol, unknown>)[REGISTRATION_OWNERSHIP_KEY] as RegistrationOwnership | undefined
+const reviewLog: ReviewLog = {
+  review: () => undefined,
+  debug: () => undefined,
 }
 
-function setRegistrationOwnership(ownership: RegistrationOwnership): void {
-  const processGlobals = globalThis as Record<symbol, unknown>
-  processGlobals[REGISTRATION_OWNERSHIP_KEY] = ownership
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
-function clearRegistrationOwnership(service: PermissionsService, ownerToken: symbol): void {
-  const ownership = getRegistrationOwnership()
-  if (ownership?.service !== service || ownership.ownerToken !== ownerToken) {
-    return
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function serializeInput(input: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(input)
+  } catch {
+    return '[input could not be serialized]'
   }
-  delete (globalThis as Record<symbol, unknown>)[REGISTRATION_OWNERSHIP_KEY]
 }
 
-function warn(message: string): void {
-  console.warn(`[${EXTENSION_ID}] ${message}`)
+function buildPermissionDetails(event: ToolCallEvent): ReviewPermissionDetails {
+  const input = asRecord(event.input)
+  const path = asString(input['path'])
+  const command = asString(input['command'])
+  const target = asString(input['target'])
+  const toolInputPreview = serializeInput(input)
+  const value = path ?? command ?? target ?? event.toolName
+
+  return {
+    requestId: event.toolCallId,
+    source: 'tool_call',
+    message: `Permission requested for ${event.toolName}.\n\nInput: ${toolInputPreview}`,
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    path,
+    command,
+    target,
+    toolInputPreview,
+    surface: event.toolName,
+    value,
+  }
+}
+
+function invalidConfigReviewer(): ReviewAuthorizer {
+  return async (details, log) => {
+    log.review('auto_review.decision', {
+      requestId: details.requestId,
+      outcome: 'escalate',
+      errorCategory: 'config-invalid',
+    })
+    return { kind: 'escalate' }
+  }
 }
 
 function installAutoReviewExtension(
@@ -79,7 +104,6 @@ function installAutoReviewExtension(
   dependencies: AutoReviewExtensionDependencies,
 ): void {
   const loadConfig = dependencies.loadConfig ?? ((cwd: string) => configStore.load(cwd))
-  const getPermissionsService = dependencies.getPermissionsService ?? getPublishedPermissionsService
   const createReviewer =
     dependencies.createReviewer ??
     ((options: ReviewerFactoryOptions) =>
@@ -87,49 +111,29 @@ function installAutoReviewExtension(
         ...options,
       }))
 
-  const circuitBreaker = new DenialCircuitBreaker()
-  const ownerToken = Symbol(EXTENSION_ID)
   let sessionRuntime: SessionRuntime | undefined
   let generation: ReviewerGeneration | undefined
-  let registrationRole: RegistrationRole = 'pending'
-  let ownedService: PermissionsService | undefined
-  // The permission service can be replaced during a Pi reload while the
-  // reviewer generation survives. Keep the service paired with its disposer
-  // so a disposer from the old service never prevents re-registration.
-  let registeredService: PermissionsService | undefined
-
-  function createInvalidConfigReviewer(): Authorizer['authorize'] {
-    return async (details, _query, log) => {
-      log.review('auto_review.decision', {
-        requestId: details.requestId,
-        outcome: 'defer',
-        errorCategory: 'config-invalid',
-      })
-      return { kind: 'defer' }
-    }
-  }
+  let redirectionsThisTurn = 0
 
   function createGeneration(config: AutoReviewConfig | undefined): ReviewerGeneration | undefined {
     if (sessionRuntime === undefined) {
       return undefined
     }
+
     const controller = new AbortController()
     try {
-      const authorize =
-        config === undefined
-          ? createInvalidConfigReviewer()
-          : createReviewer({
-              config,
-              registry: sessionRuntime.registry,
-              sessionManager: sessionRuntime.sessionManager,
-              circuitBreaker,
-              sessionSignal: controller.signal,
-            })
       return {
         config,
         controller,
-        authorize,
-        dispose: undefined,
+        authorize:
+          config === undefined
+            ? invalidConfigReviewer()
+            : createReviewer({
+                config,
+                registry: sessionRuntime.registry,
+                sessionManager: sessionRuntime.sessionManager,
+                sessionSignal: controller.signal,
+              }),
       }
     } catch (error) {
       controller.abort()
@@ -137,112 +141,79 @@ function installAutoReviewExtension(
     }
   }
 
-  function ownsRegistration(service: PermissionsService): boolean {
-    const ownership = getRegistrationOwnership()
-    return ownership?.service === service && ownership.ownerToken === ownerToken
-  }
-
-  function claimRegistration(service: PermissionsService): void {
-    setRegistrationOwnership({ service, ownerToken })
-    ownedService = service
-    registrationRole = 'owner'
-  }
-
-  function releaseRegistration(): void {
-    if (ownedService !== undefined) {
-      clearRegistrationOwnership(ownedService, ownerToken)
-    }
-    ownedService = undefined
-    registeredService = undefined
-    registrationRole = 'pending'
-  }
-
-  function cleanupGeneration(target: ReviewerGeneration | undefined): void {
-    try {
-      // Passive generations never receive a disposer. A stale owner may now
-      // be passive for a replacement service, but must still release its own
-      // old-service registration.
-      target?.dispose?.()
-    } finally {
-      if (target !== undefined) {
-        target.dispose = undefined
-        target.controller.abort()
-      }
-      releaseRegistration()
-    }
-  }
-
-  function tryRegister(): void {
-    if (generation === undefined || registrationRole === 'passive') {
-      return
-    }
-    const service = getPermissionsService()
-    if (service === undefined) {
-      return
-    }
-
-    // A reload may publish a new service without restarting this extension.
-    // The old disposer is valid only for the old service. Dispose it first,
-    // then register the current generation with the replacement service.
-    if (generation.dispose !== undefined && registeredService !== service) {
-      generation.dispose()
-      generation.dispose = undefined
-      releaseRegistration()
-    }
-    if (generation.dispose !== undefined) {
-      return
-    }
-
-    const ownership = getRegistrationOwnership()
-    if (ownership?.service === service) {
-      if (ownership.ownerToken === ownerToken) {
-        registrationRole = 'owner'
-        ownedService = service
-      } else {
-        registrationRole = 'passive'
-      }
-      return
-    }
-
-    try {
-      generation.dispose = service.registerAuthorizer(AUTHORIZER_NAME, generation.authorize)
-      registeredService = service
-      claimRegistration(service)
-    } catch (error) {
-      warn(`failed to register ${AUTHORIZER_NAME}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
   function reportIssues(result: LoadConfigResult): void {
     for (const issue of result.issues) {
-      warn(`config issue at ${issue.sourcePath}: ${issue.message}`)
+      ignoreDiagnostic(`config issue at ${issue.sourcePath}: ${issue.message}`)
     }
+  }
+
+  async function handleToolCall(event: ToolCallEvent, context: ExtensionContext): Promise<ToolCallEventResult> {
+    if (!REVIEWED_TOOLS.has(event.toolName)) {
+      return {}
+    }
+
+    const current = generation
+    if (current === undefined || current.config === undefined) {
+      return {
+        block: true,
+        reason: 'Automatic permission review is unavailable because its configuration is invalid.',
+      }
+    }
+
+    const details = buildPermissionDetails(event)
+    let verdict: Awaited<ReturnType<ReviewAuthorizer>>
+    try {
+      verdict = await current.authorize(details, reviewLog)
+    } catch (error) {
+      ignoreDiagnostic(`review failed: ${error instanceof Error ? error.message : String(error)}`)
+      verdict = { kind: 'escalate' }
+    }
+
+    if (verdict.kind === 'allow') {
+      return {}
+    }
+
+    if (verdict.kind === 'redirect' && redirectionsThisTurn < MAX_REDIRECTIONS_PER_TURN) {
+      redirectionsThisTurn += 1
+      return {
+        block: true,
+        reason: `Automatic review requires a narrower action: ${verdict.message}`,
+      }
+    }
+
+    if (verdict.kind === 'redirect') {
+      details.message = `${details.message}\n\nThe model proposed a narrower alternative three times without resolving the request.\nSuggested alternative: ${verdict.message}`
+    }
+
+    if (!context.hasUI) {
+      return {
+        block: true,
+        reason: 'Automatic review could not obtain user confirmation in this Pi mode.',
+      }
+    }
+
+    try {
+      const approved = await context.ui.confirm('Permission escalation', details.message)
+      if (approved) {
+        return {}
+      }
+    } catch (error) {
+      ignoreDiagnostic(`permission confirmation failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    return { block: true, reason: 'Permission denied by user.' }
   }
 
   function applyConfig(result: LoadConfigResult): AutoReviewActivationResult {
     reportIssues(result)
-    const current = generation
-    if (current === undefined || sessionRuntime === undefined) {
+    if (sessionRuntime === undefined) {
       return { kind: 'failed', message: 'the Pi session has not started' }
-    }
-    if (registrationRole === 'passive') {
-      return { kind: 'failed', message: PASSIVE_CONFIG_MESSAGE }
     }
     if (result.config === undefined) {
       return {
         kind: 'failed',
         message: 'the merged config is invalid; the previous reviewer remains active',
       }
-    }
-
-    const service = getPermissionsService()
-    const ownership = service === undefined ? undefined : getRegistrationOwnership()
-    if (service !== undefined && ownership?.service === service && ownership.ownerToken !== ownerToken) {
-      registrationRole = 'passive'
-      return { kind: 'failed', message: PASSIVE_CONFIG_MESSAGE }
-    }
-    if (registrationRole === 'owner' && service !== undefined && !ownsRegistration(service)) {
-      return { kind: 'failed', message: PASSIVE_CONFIG_MESSAGE }
     }
 
     let candidate: ReviewerGeneration | undefined
@@ -258,90 +229,42 @@ function installAutoReviewExtension(
       return { kind: 'failed', message: 'the Pi session has not started' }
     }
 
-    if (service === undefined) {
-      if (current.dispose !== undefined) {
-        candidate.controller.abort()
-        return {
-          kind: 'failed',
-          message: 'pi-permission-system became unavailable while the old reviewer was still registered',
-        }
-      }
-      generation = candidate
-      current.controller.abort()
-      circuitBreaker.resetTurn()
-      return { kind: 'pending' }
-    }
-
-    if (current.dispose !== undefined) {
-      try {
-        current.dispose()
-        current.dispose = undefined
-      } catch (error) {
-        candidate.controller.abort()
-        return {
-          kind: 'failed',
-          message: `failed to unregister the old reviewer: ${error instanceof Error ? error.message : String(error)}`,
-        }
-      }
-    }
-
-    try {
-      candidate.dispose = service.registerAuthorizer(AUTHORIZER_NAME, candidate.authorize)
-      registeredService = service
-      claimRegistration(service)
-    } catch (error) {
-      candidate.controller.abort()
-      const registrationMessage = error instanceof Error ? error.message : String(error)
-      try {
-        current.dispose = service.registerAuthorizer(AUTHORIZER_NAME, current.authorize)
-        registeredService = service
-        claimRegistration(service)
-      } catch (restoreError) {
-        releaseRegistration()
-        return {
-          kind: 'failed',
-          message: `new reviewer registration failed (${registrationMessage}) and the old reviewer could not be restored (${restoreError instanceof Error ? restoreError.message : String(restoreError)})`,
-        }
-      }
-      return {
-        kind: 'failed',
-        message: `new reviewer registration failed and the old reviewer was restored: ${registrationMessage}`,
-      }
-    }
-
+    const previous = generation
     generation = candidate
-    current.controller.abort()
-    circuitBreaker.resetTurn()
+    previous?.controller.abort()
+    redirectionsThisTurn = 0
     return { kind: 'active' }
   }
 
   pi.on('session_start', (_event, context) => {
-    cleanupGeneration(generation)
-    circuitBreaker.resetTurn()
-
-    const result = loadConfig(context.cwd)
+    generation?.controller.abort()
+    redirectionsThisTurn = 0
     sessionRuntime = {
       registry: context.modelRegistry,
       sessionManager: context.sessionManager,
     }
-    generation = createGeneration(result.config)
+
+    const result = loadConfig(context.cwd)
     reportIssues(result)
-    tryRegister()
+    try {
+      generation = createGeneration(result.config)
+    } catch (error) {
+      generation = undefined
+      ignoreDiagnostic(`failed to create reviewer: ${error instanceof Error ? error.message : String(error)}`)
+    }
   })
 
-  pi.events.on(PERMISSIONS_READY_CHANNEL, () => {
-    tryRegister()
-  })
+  pi.on('tool_call', handleToolCall)
 
   pi.on('turn_start', () => {
-    circuitBreaker.resetTurn()
+    redirectionsThisTurn = 0
   })
 
   pi.on('session_shutdown', () => {
-    cleanupGeneration(generation)
+    generation?.controller.abort()
     generation = undefined
     sessionRuntime = undefined
-    circuitBreaker.resetTurn()
+    redirectionsThisTurn = 0
   })
 
   registerAutoReviewCommand(pi, {

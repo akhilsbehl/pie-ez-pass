@@ -1,37 +1,34 @@
 # pie-permission-auto-review-codex
 
-[![npm version](https://img.shields.io/npm/v/pie-permission-auto-review-codex?style=flat&logo=npm&logoColor=white)](https://github.com/akhilsbehl/pie-permission-auto-review-codex) [![CI](https://img.shields.io/github/actions/workflow/status/akhilsbehl/pie-permission-auto-review-codex/release.yml?style=flat&logo=github&label=CI)](https://github.com/akhilsbehl/pie-permission-auto-review-codex/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Pi Package](https://img.shields.io/badge/Pi-Package-6366F1?style=flat)](https://github.com/earendil-works/pi)
+[![npm version](https://img.shields.io/npm/v/pie-permission-auto-review-codex?style=flat&logo=npm&logoColor=white)](https://github.com/akhilsbehl/pie-permission-auto-review-codex) [![CI](https://img.shields.io/github/actions/workflow/status/akhilsbehl/pie-permission-auto-review-codex/release.yml?style=flat&logo=github&label=CI)](https://github.com/akhilsbehl/pie-permission-auto-review-codex) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT)
 
-A [Pi](https://github.com/earendil-works/pi) extension that adds Codex-style automatic permission reviews to [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system).
+A [Pi](https://github.com/earendil-works/pi) extension that provides standalone Codex-style permissions for agent `bash`, `edit`, and `write` tool calls.
 
-## Differences between `@gotgenes/pi-permission-model-judge`
+## How it works
 
-[@gotgenes/pi-permission-model-judge](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-model-judge) is a general-purpose model-based authorizer that can be used to evaluate any permission request.
+The extension uses Pi's native `tool_call` hook. It does not depend on or register with another permission system.
 
-Ours is mostly specialized for OpenAI's `codex-auto-review` model, which is trained to evaluate permission requests in the context of a coding assistant. Our extension aims at providing Codex-style automatic permission reviews for Pi's coding agent.
+- The reviewer can `allow` a call. Pi executes it without a prompt.
+- The reviewer can `redirect` a call. The tool is blocked and the main model receives a concrete narrower instruction.
+- After three redirects in one turn, the next redirect escalates to the user.
+- The reviewer can `escalate` a call. Pi shows its native confirmation dialog.
+- Reviewer failures, invalid responses, timeouts, and unavailable configuration escalate. If no UI is available, the call is blocked.
+- User confirmation applies to that call only. There are no session approvals.
+- Tool calls other than `bash`, `edit`, and `write` pass through unchanged.
+
+Pi already supplies the required UI through `ctx.ui.confirm`; this package does not install a custom TUI.
 
 ## Install
 
-```bash
-pi install npm:@gotgenes/pi-permission-system # dependency
-Load the local package from the `configs` submodule path
+```text
+Load the local package from the `configs` submodule path.
 ```
 
-This fork targets the Node.js version supported by the current Pi installation (`>=22.19.0`). Provider lookup compatibility is implemented locally; no polyfill package is required.
+This fork targets Node.js `>=22.19.0`. Provider lookup compatibility is implemented locally; no polyfill package is required.
 
-## Enable
+## Configuration
 
-Add `"auto-review"` to pi-permission-system's config:
-
-```json
-{
-  "authorizerChain": ["auto-review"]
-}
-```
-
-The config is normally located at `~/.pi/agent/extensions/pi-permission-system/config.json`.
-
-Extension config can be omitted. The defaults are:
+Extension config is optional. Defaults are:
 
 ```json
 {
@@ -43,14 +40,12 @@ Extension config can be omitted. The defaults are:
 }
 ```
 
-`codex-auto-review` is an official hidden model. The extension derives it from Pi's `openai-codex` provider and reuses the existing Codex login.
+Configuration scopes:
 
-## Configuration
-
-| Scope   | Path                                                           |
-| ------- | -------------------------------------------------------------- |
-| Global  | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json` |
-| Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json`   |
+| Scope   | Path                                                                    |
+| ------- | ----------------------------------------------------------------------- |
+| Global  | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json`   |
+| Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json`    |
 
 Project fields override global fields. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set.
 
@@ -59,13 +54,13 @@ Project fields override global fields. `PI_CODING_AGENT_DIR` replaces `~/.pi/age
 | `provider`              | `openai-codex`      | Pi model-registry provider id                |
 | `model`                 | `codex-auto-review` | Model id within the selected provider        |
 | `reasoning`             | `low`               | Reasoning level for reviewer calls           |
-| `timeoutMs`             | `90000`             | Total budget across all retry attempts       |
-| `includeBaselinePolicy` | `true`              | Include the fork's built-in operator risk policy |
-| `additionalPolicy`      | omitted             | Optional policy appended to the built-in policy |
+| `timeoutMs`             | `90000`             | Total budget across retry attempts           |
+| `includeBaselinePolicy` | `true`              | Include the built-in operator risk policy    |
+| `additionalPolicy`      | omitted             | Optional policy appended to the built-in one |
 
-See the [example config](config/config.example.json) and bundled [JSON Schema](schemas/config.schema.json). Unknown or invalid fields disable automatic decisions and fall through to the normal prompt.
+See the [example config](config/config.example.json) and bundled [JSON Schema](schemas/config.schema.json).
 
-Use `/permission-auto-review` in Pi's interactive TUI to edit and apply global or project config without reloading the session. Available subcommands:
+Use `/permission-auto-review` in Pi's interactive TUI to edit and apply global or project config without reloading the session:
 
 ```text
 /permission-auto-review show
@@ -74,14 +69,7 @@ Use `/permission-auto-review` in Pi's interactive TUI to edit and apply global o
 /permission-auto-review help
 ```
 
-Custom providers and models must be defined in Pi's `~/.pi/agent/models.json`, then selected with this extension's `provider` and `model` fields. The fork's built-in policy is the normal policy; `additionalPolicy` is retained only for optional refinements.
-
-## Behavior and Limits
-
-- A model `deny` assessment defers to the normal human prompt; this fork never hard-denies from the reviewer.
-- Circuit-breaker-open, authentication, timeout, provider, response-format, and internal review failures defer to the normal human prompt.
-- Three consecutive denials, or ten denials in the latest fifty reviews, open a circuit breaker until the next Pi turn.
-- pi-permission-system prevents authorizers from auto-approving `path` and `external_directory` requests.
+`codex-auto-review` is derived from Pi's `openai-codex` provider and reuses the existing Codex login.
 
 ## License
 

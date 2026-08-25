@@ -1,10 +1,9 @@
-import type { DenialCircuitBreaker } from './circuit-breaker.js'
 import type { AutoReviewConfig } from './config.js'
 import type { ReviewModelRegistry } from './model.js'
 import type { ReviewAssessment } from './verdict.js'
 import type { AssistantMessage, Provider, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import type { SessionManager } from '@earendil-works/pi-coding-agent'
-import type { Authorizer, AuthorizerLog, PromptPermissionDetails } from '@gotgenes/pi-permission-system'
+import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 import { resolveReviewModel } from './model.js'
 import { buildReviewPrompt } from './prompt.js'
 import { renderTranscript } from './transcript.js'
@@ -16,7 +15,6 @@ const MAX_OUTPUT_TOKENS = 1_000
 const MAX_DISPLAY_RATIONALE_LENGTH = 600
 const DECISION_EVENT = 'auto_review.decision'
 const FAILURE_EVENT = 'auto_review.failure'
-const CIRCUIT_OPEN_EVENT = 'auto_review.circuit_open'
 
 type FailureCategory =
   | 'provider-unresolved'
@@ -32,7 +30,6 @@ export interface ReviewerRuntime {
   config: AutoReviewConfig
   registry: ReviewModelRegistry
   sessionManager: Pick<SessionManager, 'buildContextEntries'>
-  circuitBreaker: DenialCircuitBreaker
   sessionSignal?: AbortSignal
 }
 
@@ -163,9 +160,9 @@ async function callProvider(
 }
 
 function writeFailure(
-  log: AuthorizerLog,
+  log: ReviewLog,
   runtime: ReviewerRuntime,
-  details: PromptPermissionDetails,
+  details: ReviewPermissionDetails,
   failure: Failure,
   durationMs: number,
 ): void {
@@ -173,7 +170,7 @@ function writeFailure(
     requestId: details.requestId,
     provider: runtime.config.provider,
     model: runtime.config.model,
-    outcome: 'defer',
+    outcome: 'escalate',
     errorCategory: failure.category,
     durationMs,
   }
@@ -182,9 +179,9 @@ function writeFailure(
 }
 
 function tryWriteFailure(
-  log: AuthorizerLog,
+  log: ReviewLog,
   runtime: ReviewerRuntime,
-  details: PromptPermissionDetails,
+  details: ReviewPermissionDetails,
   failure: Failure,
   durationMs: number,
 ): void {
@@ -204,7 +201,7 @@ function elapsedMilliseconds(now: () => number, startedAt: number): number {
 }
 
 function annotatePermissionPrompt(
-  details: PromptPermissionDetails,
+  details: ReviewPermissionDetails,
   assessment: ReviewAssessment,
 ): void {
   const rationale = assessment.rationale.slice(0, MAX_DISPLAY_RATIONALE_LENGTH)
@@ -214,7 +211,7 @@ function annotatePermissionPrompt(
 
 async function runReview(
   runtime: ReviewerRuntime,
-  details: PromptPermissionDetails,
+  details: ReviewPermissionDetails,
   dependencies: Required<Pick<ReviewerDependencies, 'now' | 'sleep' | 'maxAttempts' | 'retryDelaysMs'>>,
 ): Promise<ReviewCallResult | Failure> {
   const startedAt = dependencies.now()
@@ -302,7 +299,7 @@ async function runReview(
 export function createPermissionReviewer(
   runtime: ReviewerRuntime,
   reviewerDependencies: ReviewerDependencies = {},
-): Authorizer['authorize'] {
+): ReviewAuthorizer {
   const dependencies = {
     now: reviewerDependencies.now ?? Date.now,
     sleep: reviewerDependencies.sleep ?? defaultSleep,
@@ -310,28 +307,15 @@ export function createPermissionReviewer(
     retryDelaysMs: reviewerDependencies.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS,
   }
 
-  return async (details, _query, log) => {
+  return async (details, log) => {
     let startedAt = 0
     try {
       startedAt = dependencies.now()
-      if (runtime.circuitBreaker.isOpen()) {
-        log.review(CIRCUIT_OPEN_EVENT, {
-          requestId: details.requestId,
-          provider: runtime.config.provider,
-          model: runtime.config.model,
-          outcome: 'defer',
-          durationMs: 0,
-          errorCategory: 'circuit-open',
-        })
-        return { kind: 'defer' }
-      }
-
       const result = await runReview(runtime, details, dependencies)
       const durationMs = elapsedMilliseconds(dependencies.now, startedAt)
       if ('category' in result) {
-        runtime.circuitBreaker.recordNonDenial()
         writeFailure(log, runtime, details, result, durationMs)
-        return { kind: 'defer' }
+        return { kind: 'escalate' }
       }
 
       const { assessment } = result
@@ -346,21 +330,21 @@ export function createPermissionReviewer(
       })
 
       if (assessment.outcome === 'allow') {
-        runtime.circuitBreaker.recordNonDenial()
         return { kind: 'allow' }
       }
 
-      // Surface the model's assessment in the existing permission prompt, then
-      // defer so the user still makes the terminal decision.
-      annotatePermissionPrompt(details, assessment)
-      runtime.circuitBreaker.recordNonDenial()
-      return { kind: 'defer' }
-    } catch {
-      try {
-        runtime.circuitBreaker.recordNonDenial()
-      } catch {
-        // Returning defer remains the safe fallback even if local state is unavailable.
+      if (assessment.outcome === 'redirect') {
+        return {
+          kind: 'redirect',
+          message: assessment.redirect ?? assessment.rationale,
+        }
       }
+
+      // Surface escalation context in the native confirmation prompt.
+      annotatePermissionPrompt(details, assessment)
+      return { kind: 'escalate' }
+    } catch {
+      // Returning escalation remains the safe fallback even if local state is unavailable.
       tryWriteFailure(
         log,
         runtime,
@@ -368,7 +352,7 @@ export function createPermissionReviewer(
         { category: 'internal-error' },
         elapsedMilliseconds(dependencies.now, startedAt),
       )
-      return { kind: 'defer' }
+      return { kind: 'escalate' }
     }
   }
 }

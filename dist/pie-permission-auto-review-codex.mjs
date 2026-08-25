@@ -1,40 +1,10 @@
-import { PERMISSIONS_READY_CHANNEL, getPermissionsService } from "@gotgenes/pi-permission-system";
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { z } from "zod";
-//#region src/circuit-breaker.ts
-const MAX_CONSECUTIVE_DENIALS = 3;
-const RECENT_WINDOW_SIZE = 50;
-const MAX_RECENT_DENIALS = 10;
-var DenialCircuitBreaker = class {
-	consecutiveDenials = 0;
-	recentDenials = [];
-	isOpen() {
-		return this.consecutiveDenials >= MAX_CONSECUTIVE_DENIALS || this.recentDenials.filter(Boolean).length >= MAX_RECENT_DENIALS;
-	}
-	recordDenied() {
-		this.consecutiveDenials += 1;
-		this.recordRecent(true);
-	}
-	recordNonDenial() {
-		this.consecutiveDenials = 0;
-		this.recordRecent(false);
-	}
-	resetTurn() {
-		this.consecutiveDenials = 0;
-		this.recentDenials = [];
-	}
-	recordRecent(denied) {
-		this.recentDenials.push(denied);
-		if (this.recentDenials.length > RECENT_WINDOW_SIZE) this.recentDenials.shift();
-	}
-};
-//#endregion
 //#region src/config.ts
 const EXTENSION_ID = "pie-permission-auto-review-codex";
-const AUTHORIZER_NAME = "auto-review";
 const DEFAULT_PROVIDER = "openai-codex";
 const DEFAULT_MODEL = "codex-auto-review";
 const DEFAULT_TIMEOUT_MS = 9e4;
@@ -444,7 +414,7 @@ async function openSettingsMenu(ctx, controller) {
 			}
 			const activation = controller.applyConfig(saved.loadResult);
 			if (activation.kind === "failed") ctx.ui.notify(`Config saved, but the current reviewer could not be replaced: ${activation.message}`, "error");
-			else if (activation.kind === "pending") ctx.ui.notify("Config saved. It will become active when pi-permission-system is ready.", "warning");
+			else if (activation.kind === "pending") ctx.ui.notify("Config saved. It will become active when the Pi session starts.", "warning");
 			else ctx.ui.notify("Config saved and applied without reloading the Pi session.", "info");
 			return;
 		}
@@ -847,40 +817,41 @@ authorize its target, scope, and side effects. Derive the assessment only after
 assigning risk_level and user_authorization.
 
 Risk and assessment rules:
-- low: Read-only work and ordinary, reversible, narrowly scoped local actions.
+- low: Ordinary, reversible, narrowly scoped local actions; actions under
+  /tmp, ~/tmp, ~/.richie, ~/.pi, or ~/warchives; non-intrusive network access;
+  calls to tools and skills supplied by installed extensions; verified,
+  user-requested local deletion or bounded changes; and routine Git operations.
   Return allow.
-- medium: Bounded local writes, edits, dependency changes, Git mutations, or
-  actions whose target is outside the current working directory. Return allow
-  only when the direct user request clearly authorizes the exact target and
-  scope; otherwise return deny.
+- medium: Actions with a meaningful but contained side effect that are not
+  clearly covered by the low-risk guidance. Return allow when the direct user
+  request clearly authorizes the exact target, scope, and side effects.
+  Otherwise return redirect with a concrete narrower target, scope, or
+  operation when one is possible; use escalate when narrowing is not enough.
 - high: Actions that may expose private data, use broad privileges, affect
-  shared or production systems, weaken a security boundary, or cause difficult
-  to reverse damage. Return allow only when the direct user message clearly
-  authorizes the exact target, scope, and side effects; otherwise return deny.
-- critical: Severe, irreversible, or unbounded blast radius. Return deny.
+  shared or production systems, weaken a security boundary, show intrusive
+  network behavior, or cause difficult-to-reverse damage. Return redirect only
+  when a concrete narrower alternative would make the action safe. Otherwise
+  return escalate.
+- critical: Severe, irreversible, destructive, or unbounded blast radius.
+  Return escalate.
 
 Additional guidance:
-- Reads of credentials, private keys, tokens, environment secrets, or cloud
-  authentication files are high risk.
+- Treat credentials, private keys, tokens, environment secrets, and cloud
+  authentication files as high risk only when the action exposes, changes, or
+  transmits them. Reading an explicitly user-requested local file is not by
+  itself credential exfiltration.
 - Treat sudo, recursive deletion, filesystem formatting, shutdown/reboot, hard
-  reset, clean, force push, and branch deletion as high risk or critical.
-- Network access, external-directory access, MCP calls, skill operations, and
-  subagent approval forwarding are medium or high risk according to their
-  exact target and side effects.
-- Routine use of already configured credentials for a user-requested action is
-  not credential exfiltration by itself.
-- A verified, user-requested local deletion or bounded change may be medium
-  rather than critical.
-- Git operations limited to one verified user-owned feature branch are usually
-  medium. Protected/default branches, broad refspecs, bypassed hooks, or loss
-  of unpushed work are high or critical.
-
-Path guidance:
-- Treat /tmp and ~/tmp as low-risk local working areas.
-- Treat /mnt and external home-directory paths as requiring confirmation
-  unless the exact request clearly authorizes them.
-- Treat configured principles files and other explicitly allowed local reads as
-  low risk.
+  reset, clean, force push, remote deletion, destructive remote operations,
+  and branch deletion as high or critical.
+- Treat ordinary network access as low risk. Escalate or redirect intrusive
+  behavior such as scanning, credential attacks, denial of service, evasion,
+  bulk unsolicited messaging, or destructive remote actions.
+- Treat calls to installed extension tools and skills as low risk unless their
+  exact action has higher-risk side effects.
+- Treat Git operations as low risk by default. Raise the risk for destructive
+  operations, especially force-push, history loss, remote deletion, broad
+  refspecs, protected/default branches, or loss of unpushed work.
+- Treat a verified, user-requested local deletion or bounded change as low risk.
 
 If a direct user message explicitly re-approves the exact previously questioned
 action after its concrete risk has been explained, treat authorization as high.
@@ -902,14 +873,15 @@ Return one JSON object and no prose. The object accepts:
 {
   "risk_level": "low" | "medium" | "high" | "critical",
   "user_authorization": "unknown" | "low" | "medium" | "high",
-  "outcome": "allow" | "deny",
-  "rationale": string
+  "outcome": "allow" | "redirect" | "escalate",
+  "rationale": string,
+  "redirect": string (required when outcome is "redirect")
 }
 
-Only outcome is required. For an obviously low-risk action, you may return
-{"outcome":"allow"}. For a deny or any non-obvious decision, include all
-fields and a concise rationale. Return deny when the action should not proceed
-automatically.
+Only outcome is required for allow. For redirect or escalate, include all
+fields and a concise rationale. For redirect, include a concrete, narrower
+alternative in redirect. Use redirect when the action could proceed after its
+scope is reduced. Use escalate when direct user confirmation is required.
 `.trim();
 function buildSystemPrompt(config) {
 	const policy = config.includeBaselinePolicy ? BASELINE_POLICY : "The operator disabled the built-in risk policy. Apply only the operator policy below.";
@@ -1176,8 +1148,19 @@ const assessmentPayloadSchema = z.strictObject({
 		"medium",
 		"high"
 	]).optional(),
-	outcome: z.enum(["allow", "deny"]),
-	rationale: z.string().trim().min(1).max(4e3).optional()
+	outcome: z.enum([
+		"allow",
+		"redirect",
+		"escalate"
+	]),
+	rationale: z.string().trim().min(1).max(4e3).optional(),
+	redirect: z.string().trim().min(1).max(4e3).optional()
+}).superRefine((payload, context) => {
+	if (payload.outcome === "redirect" && payload.redirect === void 0) context.addIssue({
+		code: "custom",
+		message: "redirect is required when outcome is redirect",
+		path: ["redirect"]
+	});
 });
 function parseJsonObject(text) {
 	try {
@@ -1192,12 +1175,13 @@ function parseJsonObject(text) {
 function parseReviewAssessment(text) {
 	const payload = assessmentPayloadSchema.parse(parseJsonObject(text));
 	const riskLevel = payload.risk_level ?? (payload.outcome === "allow" ? "low" : "high");
-	const rationale = payload.rationale ?? (payload.outcome === "allow" ? "Automatic review returned a low-risk allow decision." : "Automatic review returned a deny decision without a rationale.");
+	const rationale = payload.rationale ?? (payload.outcome === "allow" ? "Automatic review returned a low-risk allow decision." : payload.outcome === "redirect" ? "The requested action should be narrowed before it is attempted." : "Automatic review requires direct user confirmation.");
 	return {
 		riskLevel,
 		userAuthorization: payload.user_authorization ?? "unknown",
 		outcome: payload.outcome,
-		rationale
+		rationale,
+		...payload.redirect === void 0 ? {} : { redirect: payload.redirect }
 	};
 }
 //#endregion
@@ -1208,7 +1192,6 @@ const MAX_OUTPUT_TOKENS = 1e3;
 const MAX_DISPLAY_RATIONALE_LENGTH = 600;
 const DECISION_EVENT = "auto_review.decision";
 const FAILURE_EVENT = "auto_review.failure";
-const CIRCUIT_OPEN_EVENT = "auto_review.circuit_open";
 function abortError() {
 	const error = /* @__PURE__ */ new Error("operation aborted");
 	error.name = "AbortError";
@@ -1273,7 +1256,7 @@ function writeFailure(log, runtime, details, failure, durationMs) {
 		requestId: details.requestId,
 		provider: runtime.config.provider,
 		model: runtime.config.model,
-		outcome: "defer",
+		outcome: "escalate",
 		errorCategory: failure.category,
 		durationMs
 	};
@@ -1346,27 +1329,15 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 		maxAttempts: reviewerDependencies.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
 		retryDelaysMs: reviewerDependencies.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
 	};
-	return async (details, _query, log) => {
+	return async (details, log) => {
 		let startedAt = 0;
 		try {
 			startedAt = dependencies.now();
-			if (runtime.circuitBreaker.isOpen()) {
-				log.review(CIRCUIT_OPEN_EVENT, {
-					requestId: details.requestId,
-					provider: runtime.config.provider,
-					model: runtime.config.model,
-					outcome: "defer",
-					durationMs: 0,
-					errorCategory: "circuit-open"
-				});
-				return { kind: "defer" };
-			}
 			const result = await runReview(runtime, details, dependencies);
 			const durationMs = elapsedMilliseconds(dependencies.now, startedAt);
 			if ("category" in result) {
-				runtime.circuitBreaker.recordNonDenial();
 				writeFailure(log, runtime, details, result, durationMs);
-				return { kind: "defer" };
+				return { kind: "escalate" };
 			}
 			const { assessment } = result;
 			log.review(DECISION_EVENT, {
@@ -1378,62 +1349,81 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 				outcome: assessment.outcome,
 				durationMs
 			});
-			if (assessment.outcome === "allow") {
-				runtime.circuitBreaker.recordNonDenial();
-				return { kind: "allow" };
-			}
+			if (assessment.outcome === "allow") return { kind: "allow" };
+			if (assessment.outcome === "redirect") return {
+				kind: "redirect",
+				message: assessment.redirect ?? assessment.rationale
+			};
 			annotatePermissionPrompt(details, assessment);
-			runtime.circuitBreaker.recordNonDenial();
-			return { kind: "defer" };
+			return { kind: "escalate" };
 		} catch {
-			try {
-				runtime.circuitBreaker.recordNonDenial();
-			} catch {}
 			tryWriteFailure(log, runtime, details, { category: "internal-error" }, elapsedMilliseconds(dependencies.now, startedAt));
-			return { kind: "defer" };
+			return { kind: "escalate" };
 		}
 	};
 }
 //#endregion
 //#region src/extension.ts
-const REGISTRATION_OWNERSHIP_KEY = Symbol.for("@mzwing/pie-permission-auto-review-codex:registration");
-const PASSIVE_CONFIG_MESSAGE = "the auto-review authorizer is managed by the main Pi session; change its configuration there";
-function getRegistrationOwnership() {
-	return globalThis[REGISTRATION_OWNERSHIP_KEY];
+const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
+	"bash",
+	"edit",
+	"write"
+]);
+const MAX_REDIRECTIONS_PER_TURN = 3;
+const reviewLog = {
+	review: () => void 0,
+	debug: () => void 0
+};
+function asRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
-function setRegistrationOwnership(ownership) {
-	const processGlobals = globalThis;
-	processGlobals[REGISTRATION_OWNERSHIP_KEY] = ownership;
+function asString(value) {
+	return typeof value === "string" && value.length > 0 ? value : void 0;
 }
-function clearRegistrationOwnership(service, ownerToken) {
-	const ownership = getRegistrationOwnership();
-	if (ownership?.service !== service || ownership.ownerToken !== ownerToken) return;
-	delete globalThis[REGISTRATION_OWNERSHIP_KEY];
+function serializeInput(input) {
+	try {
+		return JSON.stringify(input);
+	} catch {
+		return "[input could not be serialized]";
+	}
 }
-function warn(message) {
-	console.warn(`[${EXTENSION_ID}] ${message}`);
+function buildPermissionDetails(event) {
+	const input = asRecord(event.input);
+	const path = asString(input["path"]);
+	const command = asString(input["command"]);
+	const target = asString(input["target"]);
+	const toolInputPreview = serializeInput(input);
+	const value = path ?? command ?? target ?? event.toolName;
+	return {
+		requestId: event.toolCallId,
+		source: "tool_call",
+		message: `Permission requested for ${event.toolName}.\n\nInput: ${toolInputPreview}`,
+		toolCallId: event.toolCallId,
+		toolName: event.toolName,
+		path,
+		command,
+		target,
+		toolInputPreview,
+		surface: event.toolName,
+		value
+	};
+}
+function invalidConfigReviewer() {
+	return async (details, log) => {
+		log.review("auto_review.decision", {
+			requestId: details.requestId,
+			outcome: "escalate",
+			errorCategory: "config-invalid"
+		});
+		return { kind: "escalate" };
+	};
 }
 function installAutoReviewExtension(pi, configStore, dependencies) {
 	const loadConfig = dependencies.loadConfig ?? ((cwd) => configStore.load(cwd));
-	const getPermissionsService$1 = dependencies.getPermissionsService ?? getPermissionsService;
 	const createReviewer = dependencies.createReviewer ?? ((options) => createPermissionReviewer({ ...options }));
-	const circuitBreaker = new DenialCircuitBreaker();
-	const ownerToken = Symbol(EXTENSION_ID);
 	let sessionRuntime;
 	let generation;
-	let registrationRole = "pending";
-	let ownedService;
-	let registeredService;
-	function createInvalidConfigReviewer() {
-		return async (details, _query, log) => {
-			log.review("auto_review.decision", {
-				requestId: details.requestId,
-				outcome: "defer",
-				errorCategory: "config-invalid"
-			});
-			return { kind: "defer" };
-		};
-	}
+	let redirectionsThisTurn = 0;
 	function createGeneration(config) {
 		if (sessionRuntime === void 0) return;
 		const controller = new AbortController();
@@ -1441,105 +1431,68 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			return {
 				config,
 				controller,
-				authorize: config === void 0 ? createInvalidConfigReviewer() : createReviewer({
+				authorize: config === void 0 ? invalidConfigReviewer() : createReviewer({
 					config,
 					registry: sessionRuntime.registry,
 					sessionManager: sessionRuntime.sessionManager,
-					circuitBreaker,
 					sessionSignal: controller.signal
-				}),
-				dispose: void 0
+				})
 			};
 		} catch (error) {
 			controller.abort();
 			throw error;
 		}
 	}
-	function ownsRegistration(service) {
-		const ownership = getRegistrationOwnership();
-		return ownership?.service === service && ownership.ownerToken === ownerToken;
-	}
-	function claimRegistration(service) {
-		setRegistrationOwnership({
-			service,
-			ownerToken
-		});
-		ownedService = service;
-		registrationRole = "owner";
-	}
-	function releaseRegistration() {
-		if (ownedService !== void 0) clearRegistrationOwnership(ownedService, ownerToken);
-		ownedService = void 0;
-		registeredService = void 0;
-		registrationRole = "pending";
-	}
-	function cleanupGeneration(target) {
-		try {
-			target?.dispose?.();
-		} finally {
-			if (target !== void 0) {
-				target.dispose = void 0;
-				target.controller.abort();
-			}
-			releaseRegistration();
-		}
-	}
-	function tryRegister() {
-		if (generation === void 0 || registrationRole === "passive") return;
-		const service = getPermissionsService$1();
-		if (service === void 0) return;
-		if (generation.dispose !== void 0 && registeredService !== service) {
-			generation.dispose();
-			generation.dispose = void 0;
-			releaseRegistration();
-		}
-		if (generation.dispose !== void 0) return;
-		const ownership = getRegistrationOwnership();
-		if (ownership?.service === service) {
-			if (ownership.ownerToken === ownerToken) {
-				registrationRole = "owner";
-				ownedService = service;
-			} else registrationRole = "passive";
-			return;
-		}
-		try {
-			generation.dispose = service.registerAuthorizer(AUTHORIZER_NAME, generation.authorize);
-			registeredService = service;
-			claimRegistration(service);
-		} catch (error) {
-			warn(`failed to register ${AUTHORIZER_NAME}: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
 	function reportIssues(result) {
-		for (const issue of result.issues) warn(`config issue at ${issue.sourcePath}: ${issue.message}`);
+		for (const issue of result.issues) `${issue.sourcePath}${issue.message}`;
+	}
+	async function handleToolCall(event, context) {
+		if (!REVIEWED_TOOLS.has(event.toolName)) return {};
+		const current = generation;
+		if (current === void 0 || current.config === void 0) return {
+			block: true,
+			reason: "Automatic permission review is unavailable because its configuration is invalid."
+		};
+		const details = buildPermissionDetails(event);
+		let verdict;
+		try {
+			verdict = await current.authorize(details, reviewLog);
+		} catch (error) {
+			`${error instanceof Error ? error.message : String(error)}`;
+			verdict = { kind: "escalate" };
+		}
+		if (verdict.kind === "allow") return {};
+		if (verdict.kind === "redirect" && redirectionsThisTurn < MAX_REDIRECTIONS_PER_TURN) {
+			redirectionsThisTurn += 1;
+			return {
+				block: true,
+				reason: `Automatic review requires a narrower action: ${verdict.message}`
+			};
+		}
+		if (verdict.kind === "redirect") details.message = `${details.message}\n\nThe model proposed a narrower alternative three times without resolving the request.\nSuggested alternative: ${verdict.message}`;
+		if (!context.hasUI) return {
+			block: true,
+			reason: "Automatic review could not obtain user confirmation in this Pi mode."
+		};
+		try {
+			if (await context.ui.confirm("Permission escalation", details.message)) return {};
+		} catch (error) {
+			`${error instanceof Error ? error.message : String(error)}`;
+		}
+		return {
+			block: true,
+			reason: "Permission denied by user."
+		};
 	}
 	function applyConfig(result) {
 		reportIssues(result);
-		const current = generation;
-		if (current === void 0 || sessionRuntime === void 0) return {
+		if (sessionRuntime === void 0) return {
 			kind: "failed",
 			message: "the Pi session has not started"
-		};
-		if (registrationRole === "passive") return {
-			kind: "failed",
-			message: PASSIVE_CONFIG_MESSAGE
 		};
 		if (result.config === void 0) return {
 			kind: "failed",
 			message: "the merged config is invalid; the previous reviewer remains active"
-		};
-		const service = getPermissionsService$1();
-		const ownership = service === void 0 ? void 0 : getRegistrationOwnership();
-		if (service !== void 0 && ownership?.service === service && ownership.ownerToken !== ownerToken) {
-			registrationRole = "passive";
-			return {
-				kind: "failed",
-				message: PASSIVE_CONFIG_MESSAGE
-			};
-		}
-		if (registrationRole === "owner" && service !== void 0 && !ownsRegistration(service)) return {
-			kind: "failed",
-			message: PASSIVE_CONFIG_MESSAGE
 		};
 		let candidate;
 		try {
@@ -1554,80 +1507,37 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			kind: "failed",
 			message: "the Pi session has not started"
 		};
-		if (service === void 0) {
-			if (current.dispose !== void 0) {
-				candidate.controller.abort();
-				return {
-					kind: "failed",
-					message: "pi-permission-system became unavailable while the old reviewer was still registered"
-				};
-			}
-			generation = candidate;
-			current.controller.abort();
-			circuitBreaker.resetTurn();
-			return { kind: "pending" };
-		}
-		if (current.dispose !== void 0) try {
-			current.dispose();
-			current.dispose = void 0;
-		} catch (error) {
-			candidate.controller.abort();
-			return {
-				kind: "failed",
-				message: `failed to unregister the old reviewer: ${error instanceof Error ? error.message : String(error)}`
-			};
-		}
-		try {
-			candidate.dispose = service.registerAuthorizer(AUTHORIZER_NAME, candidate.authorize);
-			registeredService = service;
-			claimRegistration(service);
-		} catch (error) {
-			candidate.controller.abort();
-			const registrationMessage = error instanceof Error ? error.message : String(error);
-			try {
-				current.dispose = service.registerAuthorizer(AUTHORIZER_NAME, current.authorize);
-				registeredService = service;
-				claimRegistration(service);
-			} catch (restoreError) {
-				releaseRegistration();
-				return {
-					kind: "failed",
-					message: `new reviewer registration failed (${registrationMessage}) and the old reviewer could not be restored (${restoreError instanceof Error ? restoreError.message : String(restoreError)})`
-				};
-			}
-			return {
-				kind: "failed",
-				message: `new reviewer registration failed and the old reviewer was restored: ${registrationMessage}`
-			};
-		}
+		const previous = generation;
 		generation = candidate;
-		current.controller.abort();
-		circuitBreaker.resetTurn();
+		previous?.controller.abort();
+		redirectionsThisTurn = 0;
 		return { kind: "active" };
 	}
 	pi.on("session_start", (_event, context) => {
-		cleanupGeneration(generation);
-		circuitBreaker.resetTurn();
-		const result = loadConfig(context.cwd);
+		generation?.controller.abort();
+		redirectionsThisTurn = 0;
 		sessionRuntime = {
 			registry: context.modelRegistry,
 			sessionManager: context.sessionManager
 		};
-		generation = createGeneration(result.config);
+		const result = loadConfig(context.cwd);
 		reportIssues(result);
-		tryRegister();
+		try {
+			generation = createGeneration(result.config);
+		} catch (error) {
+			generation = void 0;
+			`${error instanceof Error ? error.message : String(error)}`;
+		}
 	});
-	pi.events.on(PERMISSIONS_READY_CHANNEL, () => {
-		tryRegister();
-	});
+	pi.on("tool_call", handleToolCall);
 	pi.on("turn_start", () => {
-		circuitBreaker.resetTurn();
+		redirectionsThisTurn = 0;
 	});
 	pi.on("session_shutdown", () => {
-		cleanupGeneration(generation);
+		generation?.controller.abort();
 		generation = void 0;
 		sessionRuntime = void 0;
-		circuitBreaker.resetTurn();
+		redirectionsThisTurn = 0;
 	});
 	registerAutoReviewCommand(pi, {
 		configStore,
@@ -1644,4 +1554,4 @@ function permissionAutoReviewExtension(pi) {
 	createAutoReviewExtension(pi);
 }
 //#endregion
-export { AUTHORIZER_NAME, CONFIG_SCHEMA_URL, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };
+export { CONFIG_SCHEMA_URL, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };

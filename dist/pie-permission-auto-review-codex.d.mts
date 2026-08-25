@@ -1,9 +1,7 @@
-import { Authorizer, PermissionsService } from "@gotgenes/pi-permission-system";
 import { z } from "zod";
 import { ExtensionAPI, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
 //#region src/config.d.ts
 declare const EXTENSION_ID = "pie-permission-auto-review-codex";
-declare const AUTHORIZER_NAME = "auto-review";
 declare const DEFAULT_PROVIDER = "openai-codex";
 declare const DEFAULT_MODEL = "codex-auto-review";
 declare const DEFAULT_TIMEOUT_MS = 90000;
@@ -45,33 +43,54 @@ interface LoadConfigOptions {
 declare function loadAutoReviewConfig(options: LoadConfigOptions): LoadConfigResult;
 declare function buildAutoReviewJsonSchema(): Record<string, unknown>;
 //#endregion
-//#region src/circuit-breaker.d.ts
-declare class DenialCircuitBreaker {
-  private consecutiveDenials;
-  private recentDenials;
-  isOpen(): boolean;
-  recordDenied(): void;
-  recordNonDenial(): void;
-  resetTurn(): void;
-  private recordRecent;
+//#region src/review-types.d.ts
+interface ReviewPermissionDetails {
+  requestId: string;
+  source: string;
+  agentName?: string;
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  skillName?: string;
+  path?: string;
+  command?: string;
+  target?: string;
+  toolInputPreview?: string;
+  sessionLabel?: string;
+  surface?: string;
+  value?: string;
+  forwarding?: unknown;
+  sessionApproval?: unknown;
+  accessIntent?: unknown;
 }
+interface ReviewLog {
+  review(event: string, details?: Record<string, unknown>): void;
+  debug(event: string, details?: Record<string, unknown>): void;
+}
+type ReviewVerdict = {
+  kind: 'allow';
+} | {
+  kind: 'redirect';
+  message: string;
+} | {
+  kind: 'escalate';
+};
+type ReviewAuthorizer = (details: ReviewPermissionDetails, log: ReviewLog) => Promise<ReviewVerdict>;
 //#endregion
 //#region src/extension.d.ts
 interface ReviewerFactoryOptions {
   config: AutoReviewConfig;
   registry: ModelRegistry;
   sessionManager: Pick<SessionManager, 'buildContextEntries'>;
-  circuitBreaker: DenialCircuitBreaker;
   sessionSignal: AbortSignal;
 }
 interface AutoReviewExtensionDependencies {
   loadConfig?: (cwd: string) => LoadConfigResult;
-  getPermissionsService?: () => PermissionsService | undefined;
-  createReviewer?: (options: ReviewerFactoryOptions) => Authorizer['authorize'];
+  createReviewer?: (options: ReviewerFactoryOptions) => ReviewAuthorizer;
 }
 declare function createAutoReviewExtension(pi: ExtensionAPI, dependencies?: AutoReviewExtensionDependencies): void;
 //#endregion
 //#region src/index.d.ts
 declare function permissionAutoReviewExtension(pi: ExtensionAPI): void;
 //#endregion
-export { AUTHORIZER_NAME, type AutoReviewConfig, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };
+export { type AutoReviewConfig, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };

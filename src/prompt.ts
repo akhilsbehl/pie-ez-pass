@@ -1,6 +1,6 @@
 import type { AutoReviewConfig } from './config.js'
 import type { RenderedTranscript } from './transcript.js'
-import type { PromptPermissionDetails } from '@gotgenes/pi-permission-system'
+import type { ReviewPermissionDetails } from './review-types.js'
 import { buildSystemPrompt } from './policy.js'
 import { truncateToApproximateTokens } from './transcript.js'
 
@@ -11,7 +11,7 @@ export interface ReviewPrompt {
   userPrompt: string
 }
 
-function normalizePermissionDetails(details: PromptPermissionDetails): Record<string, unknown> {
+function normalizePermissionDetails(details: ReviewPermissionDetails): Record<string, unknown> {
   const normalized: Record<string, unknown> = {}
   const fields = [
     'requestId',
@@ -45,7 +45,7 @@ function normalizePermissionDetails(details: PromptPermissionDetails): Record<st
 export function buildReviewPrompt(
   config: AutoReviewConfig,
   transcript: RenderedTranscript,
-  details: PromptPermissionDetails,
+  details: ReviewPermissionDetails,
 ): ReviewPrompt {
   const renderedTranscript =
     transcript.entries.length > 0

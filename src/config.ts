@@ -5,7 +5,6 @@ import process from 'node:process'
 import { z } from 'zod'
 
 export const EXTENSION_ID = 'pie-permission-auto-review-codex'
-export const AUTHORIZER_NAME = 'auto-review'
 export const DEFAULT_PROVIDER = 'openai-codex'
 export const DEFAULT_MODEL = 'codex-auto-review'
 export const DEFAULT_TIMEOUT_MS = 90_000
