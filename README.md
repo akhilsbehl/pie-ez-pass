@@ -26,6 +26,27 @@ session working directory, with path-segment boundaries enforced.
 
 Pi already supplies the required UI through `ctx.ui.confirm`; this package does not install a custom TUI.
 
+## Permission review log
+
+Each reviewed `bash`, `edit`, and `write` call is recorded as one JSON object per line in:
+
+```text
+~/.pi/agent/runtime/review-permission-logs.jsonl
+```
+
+Records are append-only and use schema version `1`. The logger creates the runtime directory with mode `0700` and the file with mode `0600`; logging is best effort and never changes a permission decision. The schema is:
+
+- Common: `schemaVersion`, `timestamp` (ISO 8601), `sessionId`, `event`, and usually `requestId`, `toolCallId`, and `toolName`.
+- Request events: `event: permission.tool_call`, `operation`, `requestSummary`, `inputKeys`, `inputSha256`, and `valueSha256`. The summary shows the command or target path, is truncated, and redacts common credential assignments. Tool contents and prompts are not stored.
+- Reviewer verdicts: `event: auto_review.decision`, `policy: model-review`, `provider`, `model`, `outcome`, `riskLevel`, `userAuthorization`, `rationale`, `redirect`, and `durationMs`.
+- Deterministic decisions: `event: permission.decision`, `policy: deterministic-path`, and `outcome: allow`.
+- User escalation: `event: permission.user_decision`, with `policy: user-confirmation` and `outcome` `approved` or `denied`.
+- Blocked outcomes: `event: permission.blocked`, with a non-sensitive `reasonCode`.
+- Errors: `event: permission.error` or `auto_review.failure`, with `errorCategory`; error messages are not stored.
+- Session lifecycle: `permission.session_start` and `permission.session_shutdown` records. The working directory is hashed.
+
+The log is local telemetry, not an audit trail: an attacker who can write to the user's home directory can alter it, and SHA-256 digests can be matched against guessed inputs. It can contain sensitive command paths and model rationales despite redaction. Protect and rotate it as needed.
+
 The tracked runtime bundle includes its only runtime library dependency, `zod`. A fresh checkout can therefore be loaded directly from a symlink without `node_modules`. The package still declares `zod` for normal npm installation and TypeScript declarations.
 
 ## Install

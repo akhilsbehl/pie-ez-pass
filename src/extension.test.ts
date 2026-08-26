@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { LoadConfigResult } from './config.js'
+import type { ReviewLog } from './review-types.js'
 import { createAutoReviewExtension } from './extension.js'
 
 type Handler = (...args: any[]) => unknown
@@ -41,12 +42,14 @@ function startExtension(
   const reviewer = vi.fn(async () =>
     verdict === 'redirect' ? { kind: 'redirect' as const, message: 'Use one file at a time.' } : { kind: verdict },
   )
+  const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
   createAutoReviewExtension(pi as never, {
     loadConfig,
     createReviewer: () => reviewer,
+    reviewLog,
   })
   pi.handlers.get('session_start')?.({}, makeContext(true))
-  return { pi, reviewer }
+  return { pi, reviewer, reviewLog }
 }
 
 const toolCall = {
@@ -70,6 +73,30 @@ describe('standalone tool-call permission boundary', () => {
     expect(result).toEqual({})
     expect(reviewer).not.toHaveBeenCalled()
     expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
+
+  it('logs the request and deterministic decision with a session correlation id', async () => {
+    const { pi, reviewLog } = startExtension('escalate')
+    const context = makeContext(false)
+
+    await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      toolName: 'write',
+      input: { path: 'src/index.ts', content: 'export {}' },
+    }, context)
+
+    expect(reviewLog.review).toHaveBeenCalledWith(
+      'permission.tool_call',
+      expect.objectContaining({
+        sessionId: expect.any(String),
+        toolName: 'write',
+        requestSummary: 'write path=src/index.ts',
+      }),
+    )
+    expect(reviewLog.review).toHaveBeenCalledWith(
+      'permission.decision',
+      expect.objectContaining({ policy: 'deterministic-path', outcome: 'allow' }),
+    )
   })
 
   it('uses the session-start working directory for relative write paths', async () => {

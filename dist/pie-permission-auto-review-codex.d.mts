@@ -87,6 +87,7 @@ interface ReviewerFactoryOptions {
 interface AutoReviewExtensionDependencies {
   loadConfig?: (cwd: string) => LoadConfigResult;
   createReviewer?: (options: ReviewerFactoryOptions) => ReviewAuthorizer;
+  reviewLog?: ReviewLog;
 }
 declare function createAutoReviewExtension(pi: ExtensionAPI, dependencies?: AutoReviewExtensionDependencies): void;
 //#endregion

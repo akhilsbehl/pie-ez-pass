@@ -168,8 +168,11 @@ function writeFailure(
 ): void {
   const common = {
     requestId: details.requestId,
+    toolCallId: details.toolCallId,
+    toolName: details.toolName,
     provider: runtime.config.provider,
     model: runtime.config.model,
+    policy: 'model-review',
     outcome: 'escalate',
     errorCategory: failure.category,
     durationMs,
@@ -321,11 +324,16 @@ export function createPermissionReviewer(
       const { assessment } = result
       log.review(DECISION_EVENT, {
         requestId: details.requestId,
+        toolCallId: details.toolCallId,
+        toolName: details.toolName,
         provider: runtime.config.provider,
         model: runtime.config.model,
+        policy: 'model-review',
         riskLevel: assessment.riskLevel,
         userAuthorization: assessment.userAuthorization,
         outcome: assessment.outcome,
+        rationale: assessment.rationale,
+        redirect: assessment.redirect,
         durationMs,
       })
 

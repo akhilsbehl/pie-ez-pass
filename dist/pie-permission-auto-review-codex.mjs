@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, chmodSync, closeSync, constants, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -5492,8 +5493,11 @@ async function callProvider(provider, model, systemPrompt, userPrompt, options) 
 function writeFailure(log, runtime, details, failure, durationMs) {
 	const common = {
 		requestId: details.requestId,
+		toolCallId: details.toolCallId,
+		toolName: details.toolName,
 		provider: runtime.config.provider,
 		model: runtime.config.model,
+		policy: "model-review",
 		outcome: "escalate",
 		errorCategory: failure.category,
 		durationMs
@@ -5580,11 +5584,16 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 			const { assessment } = result;
 			log.review(DECISION_EVENT, {
 				requestId: details.requestId,
+				toolCallId: details.toolCallId,
+				toolName: details.toolName,
 				provider: runtime.config.provider,
 				model: runtime.config.model,
+				policy: "model-review",
 				riskLevel: assessment.riskLevel,
 				userAuthorization: assessment.userAuthorization,
 				outcome: assessment.outcome,
+				rationale: assessment.rationale,
+				redirect: assessment.redirect,
 				durationMs
 			});
 			if (assessment.outcome === "allow") return { kind: "allow" };
@@ -5633,6 +5642,88 @@ function isDeterministicallyAllowedWritePath(requestedPath, cwd) {
 	return [sessionCwd, ...FIXED_WRITE_DIRECTORIES.map((directory) => directory === "/tmp" ? directory : resolve(homedir(), directory))].some((directory) => isWithinDirectory(directory, target));
 }
 //#endregion
+//#region src/permission-log.ts
+const PERMISSION_LOG_PATH = join(homedir(), ".pi", "agent", "runtime", "review-permission-logs.jsonl");
+const MAX_PREVIEW_LENGTH = 2e3;
+const SENSITIVE_ASSIGNMENT = /\b(password|passwd|secret|token|api[_-]?key|authorization|cookie|private[_-]?key)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|Bearer\s+[^\s"']+|\S+)/gi;
+const BEARER_TOKEN = /\bBearer\s+[^\s"']+/gi;
+function sha256(value) {
+	if (typeof value !== "string") return void 0;
+	return createHash("sha256").update(value).digest("hex");
+}
+function safePreview(value) {
+	if (typeof value !== "string") return void 0;
+	const redacted = value.replace(BEARER_TOKEN, "Bearer [REDACTED]").replace(SENSITIVE_ASSIGNMENT, (_match, key, separator, secret) => {
+		if (secret === "Bearer [REDACTED]") return `${key}${separator}${secret}`;
+		const quote = secret[0] === "\"" || secret[0] === "'" ? secret[0] : "";
+		return `${key}${separator}${quote}[REDACTED]${quote}`;
+	});
+	return redacted.length > MAX_PREVIEW_LENGTH ? `${redacted.slice(0, MAX_PREVIEW_LENGTH)}…` : redacted;
+}
+/** Append-only, best-effort logger. Logging must never change the permission decision. */
+function createPermissionLog(filePath = PERMISSION_LOG_PATH) {
+	const append = (event, details = {}) => {
+		const record = {
+			schemaVersion: 1,
+			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+			event
+		};
+		const copyString = (key, preview = false) => {
+			const value = details[key];
+			const copied = preview ? safePreview(value) : value;
+			if (typeof copied === "string" && copied.length > 0) record[key] = copied;
+		};
+		for (const key of [
+			"sessionId",
+			"requestId",
+			"toolCallId",
+			"toolName",
+			"operation",
+			"policy",
+			"outcome",
+			"riskLevel",
+			"userAuthorization",
+			"provider",
+			"model",
+			"errorCategory",
+			"reasonCode"
+		]) copyString(key);
+		for (const key of [
+			"requestSummary",
+			"rationale",
+			"redirect"
+		]) copyString(key, true);
+		if (typeof details.durationMs === "number" && Number.isFinite(details.durationMs)) record.durationMs = details.durationMs;
+		if (Array.isArray(details.inputKeys)) record.inputKeys = details.inputKeys.filter((key) => typeof key === "string").slice(0, 100);
+		record.inputSha256 = sha256(details.toolInputPreview);
+		record.valueSha256 = sha256(details.value);
+		if (record.inputSha256 === void 0) delete record.inputSha256;
+		if (record.valueSha256 === void 0) delete record.valueSha256;
+		try {
+			mkdirSync(dirname(filePath), {
+				recursive: true,
+				mode: 448
+			});
+			try {
+				chmodSync(dirname(filePath), 448);
+			} catch {}
+			const fd = openSync(filePath, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 384);
+			try {
+				appendFileSync(fd, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
+				try {
+					chmodSync(filePath, 384);
+				} catch {}
+			} finally {
+				closeSync(fd);
+			}
+		} catch {}
+	};
+	return {
+		review: append,
+		debug: append
+	};
+}
+//#endregion
 //#region src/extension.ts
 const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"bash",
@@ -5640,10 +5731,6 @@ const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"write"
 ]);
 const MAX_REDIRECTIONS_PER_NEGOTIATION = 2;
-const reviewLog = {
-	review: () => void 0,
-	debug: () => void 0
-};
 function asRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
@@ -5682,6 +5769,9 @@ function invalidConfigReviewer() {
 	return async (details, log) => {
 		log.review("auto_review.decision", {
 			requestId: details.requestId,
+			toolCallId: details.toolCallId,
+			toolName: details.toolName,
+			policy: "configuration",
 			outcome: "escalate",
 			errorCategory: "config-invalid"
 		});
@@ -5691,6 +5781,26 @@ function invalidConfigReviewer() {
 function installAutoReviewExtension(pi, configStore, dependencies) {
 	const loadConfig = dependencies.loadConfig ?? ((cwd) => configStore.load(cwd));
 	const createReviewer = dependencies.createReviewer ?? ((options) => createPermissionReviewer({ ...options }));
+	const configuredReviewLog = dependencies.reviewLog ?? createPermissionLog();
+	let sessionId = randomUUID();
+	const reviewLog = {
+		review: (event, details) => {
+			try {
+				configuredReviewLog.review(event, {
+					...details,
+					sessionId
+				});
+			} catch {}
+		},
+		debug: (event, details) => {
+			try {
+				configuredReviewLog.debug(event, {
+					...details,
+					sessionId
+				});
+			} catch {}
+		}
+	};
 	let sessionRuntime;
 	let generation;
 	let redirectionsInNegotiation = 0;
@@ -5719,20 +5829,48 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	async function handleToolCall(event, context) {
 		if (!REVIEWED_TOOLS.has(event.toolName)) return {};
 		const details = buildPermissionDetails(event);
+		reviewLog.review("permission.tool_call", {
+			requestId: details.requestId,
+			toolCallId: details.toolCallId,
+			toolName: details.toolName,
+			operation: event.toolName,
+			requestSummary: details.command !== void 0 ? details.command : details.path !== void 0 ? `${event.toolName} path=${details.path}` : details.target !== void 0 ? `${event.toolName} target=${details.target}` : event.toolName,
+			toolInputPreview: details.toolInputPreview,
+			inputKeys: Object.keys(asRecord(event.input)),
+			value: details.value
+		});
 		if ((event.toolName === "edit" || event.toolName === "write") && details.path !== void 0 && sessionRuntime !== void 0 && isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)) {
 			redirectionsInNegotiation = 0;
+			reviewLog.review("permission.decision", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				policy: "deterministic-path",
+				outcome: "allow"
+			});
 			return {};
 		}
 		const current = generation;
-		if (current === void 0 || current.config === void 0) return {
-			block: true,
-			reason: "Automatic permission review is unavailable because its configuration is invalid."
-		};
+		if (current === void 0 || current.config === void 0) {
+			reviewLog.review("permission.blocked", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				reasonCode: "config-invalid"
+			});
+			return {
+				block: true,
+				reason: "Automatic permission review is unavailable because its configuration is invalid."
+			};
+		}
 		let verdict;
 		try {
 			verdict = await current.authorize(details, reviewLog);
 		} catch (error) {
 			`${error instanceof Error ? error.message : String(error)}`;
+			reviewLog.review("permission.error", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				errorCategory: "authorizer-error"
+			});
 			verdict = { kind: "escalate" };
 		}
 		if (verdict.kind === "allow") {
@@ -5741,6 +5879,12 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		}
 		if (verdict.kind === "redirect" && redirectionsInNegotiation < MAX_REDIRECTIONS_PER_NEGOTIATION) {
 			redirectionsInNegotiation += 1;
+			reviewLog.review("permission.blocked", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				outcome: "redirect",
+				reasonCode: "redirect"
+			});
 			return {
 				block: true,
 				reason: `Automatic review requires a narrower action: ${verdict.message}`
@@ -5749,6 +5893,11 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		if (verdict.kind === "redirect") details.message = `${details.message}\n\nThe model proposed a narrower alternative twice without resolving the request.\nSuggested alternative: ${verdict.message}`;
 		if (!context.hasUI) {
 			redirectionsInNegotiation = 0;
+			reviewLog.review("permission.blocked", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				reasonCode: "no-ui"
+			});
 			return {
 				block: true,
 				reason: "Automatic review could not obtain user confirmation in this Pi mode."
@@ -5757,11 +5906,27 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		try {
 			const approved = await context.ui.confirm("Permission escalation", details.message);
 			redirectionsInNegotiation = 0;
+			reviewLog.review("permission.user_decision", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				policy: "user-confirmation",
+				outcome: approved ? "approved" : "denied"
+			});
 			if (approved) return {};
 		} catch (error) {
 			`${error instanceof Error ? error.message : String(error)}`;
+			reviewLog.review("permission.error", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				errorCategory: "user-confirmation-error"
+			});
 			redirectionsInNegotiation = 0;
 		}
+		reviewLog.review("permission.blocked", {
+			requestId: details.requestId,
+			toolName: details.toolName,
+			reasonCode: "user-denied"
+		});
 		return {
 			block: true,
 			reason: "Permission denied by user."
@@ -5799,11 +5964,13 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	pi.on("session_start", (_event, context) => {
 		generation?.controller.abort();
 		redirectionsInNegotiation = 0;
+		sessionId = randomUUID();
 		sessionRuntime = {
 			cwd: context.cwd,
 			registry: context.modelRegistry,
 			sessionManager: context.sessionManager
 		};
+		reviewLog.review("permission.session_start", { value: context.cwd });
 		const result = loadConfig(context.cwd);
 		reportIssues(result);
 		try {
@@ -5816,6 +5983,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	pi.on("tool_call", handleToolCall);
 	pi.on("turn_start", () => {});
 	pi.on("session_shutdown", () => {
+		reviewLog.review("permission.session_shutdown");
 		generation?.controller.abort();
 		generation = void 0;
 		sessionRuntime = void 0;

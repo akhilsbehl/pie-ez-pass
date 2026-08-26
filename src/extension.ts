@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -13,6 +14,7 @@ import { AutoReviewConfigStore } from './config-store.js'
 import { createPermissionReviewer } from './reviewer.js'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 import { isDeterministicallyAllowedWritePath } from './write-policy.js'
+import { createPermissionLog } from './permission-log.js'
 
 interface ReviewerFactoryOptions {
   config: AutoReviewConfig
@@ -24,6 +26,7 @@ interface ReviewerFactoryOptions {
 export interface AutoReviewExtensionDependencies {
   loadConfig?: (cwd: string) => LoadConfigResult
   createReviewer?: (options: ReviewerFactoryOptions) => ReviewAuthorizer
+  reviewLog?: ReviewLog
 }
 
 interface ReviewerGeneration {
@@ -45,10 +48,6 @@ function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.
 }
 
-const reviewLog: ReviewLog = {
-  review: () => undefined,
-  debug: () => undefined,
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -93,6 +92,9 @@ function invalidConfigReviewer(): ReviewAuthorizer {
   return async (details, log) => {
     log.review('auto_review.decision', {
       requestId: details.requestId,
+      toolCallId: details.toolCallId,
+      toolName: details.toolName,
+      policy: 'configuration',
       outcome: 'escalate',
       errorCategory: 'config-invalid',
     })
@@ -112,6 +114,24 @@ function installAutoReviewExtension(
       createPermissionReviewer({
         ...options,
       }))
+  const configuredReviewLog = dependencies.reviewLog ?? createPermissionLog()
+  let sessionId = randomUUID()
+  const reviewLog: ReviewLog = {
+    review: (event, details) => {
+      try {
+        configuredReviewLog.review(event, { ...details, sessionId })
+      } catch {
+        // Logging must never change the permission decision.
+      }
+    },
+    debug: (event, details) => {
+      try {
+        configuredReviewLog.debug(event, { ...details, sessionId })
+      } catch {
+        // Logging must never change the permission decision.
+      }
+    },
+  }
 
   let sessionRuntime: SessionRuntime | undefined
   let generation: ReviewerGeneration | undefined
@@ -155,6 +175,23 @@ function installAutoReviewExtension(
     }
 
     const details = buildPermissionDetails(event)
+    reviewLog.review('permission.tool_call', {
+      requestId: details.requestId,
+      toolCallId: details.toolCallId,
+      toolName: details.toolName,
+      operation: event.toolName,
+      requestSummary:
+        details.command !== undefined
+          ? details.command
+          : details.path !== undefined
+            ? `${event.toolName} path=${details.path}`
+            : details.target !== undefined
+              ? `${event.toolName} target=${details.target}`
+              : event.toolName,
+      toolInputPreview: details.toolInputPreview,
+      inputKeys: Object.keys(asRecord(event.input)),
+      value: details.value,
+    })
     if (
       (event.toolName === 'edit' || event.toolName === 'write') &&
       details.path !== undefined &&
@@ -162,11 +199,22 @@ function installAutoReviewExtension(
       isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)
     ) {
       redirectionsInNegotiation = 0
+      reviewLog.review('permission.decision', {
+        requestId: details.requestId,
+        toolName: details.toolName,
+        policy: 'deterministic-path',
+        outcome: 'allow',
+      })
       return {}
     }
 
     const current = generation
     if (current === undefined || current.config === undefined) {
+      reviewLog.review('permission.blocked', {
+        requestId: details.requestId,
+        toolName: details.toolName,
+        reasonCode: 'config-invalid',
+      })
       return {
         block: true,
         reason: 'Automatic permission review is unavailable because its configuration is invalid.',
@@ -177,6 +225,7 @@ function installAutoReviewExtension(
       verdict = await current.authorize(details, reviewLog)
     } catch (error) {
       ignoreDiagnostic(`review failed: ${error instanceof Error ? error.message : String(error)}`)
+      reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'authorizer-error' })
       verdict = { kind: 'escalate' }
     }
 
@@ -187,6 +236,12 @@ function installAutoReviewExtension(
 
     if (verdict.kind === 'redirect' && redirectionsInNegotiation < MAX_REDIRECTIONS_PER_NEGOTIATION) {
       redirectionsInNegotiation += 1
+      reviewLog.review('permission.blocked', {
+        requestId: details.requestId,
+        toolName: details.toolName,
+        outcome: 'redirect',
+        reasonCode: 'redirect',
+      })
       return {
         block: true,
         reason: `Automatic review requires a narrower action: ${verdict.message}`,
@@ -199,6 +254,11 @@ function installAutoReviewExtension(
 
     if (!context.hasUI) {
       redirectionsInNegotiation = 0
+      reviewLog.review('permission.blocked', {
+        requestId: details.requestId,
+        toolName: details.toolName,
+        reasonCode: 'no-ui',
+      })
       return {
         block: true,
         reason: 'Automatic review could not obtain user confirmation in this Pi mode.',
@@ -208,14 +268,26 @@ function installAutoReviewExtension(
     try {
       const approved = await context.ui.confirm('Permission escalation', details.message)
       redirectionsInNegotiation = 0
+      reviewLog.review('permission.user_decision', {
+        requestId: details.requestId,
+        toolName: details.toolName,
+        policy: 'user-confirmation',
+        outcome: approved ? 'approved' : 'denied',
+      })
       if (approved) {
         return {}
       }
     } catch (error) {
       ignoreDiagnostic(`permission confirmation failed: ${error instanceof Error ? error.message : String(error)}`)
+      reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'user-confirmation-error' })
       redirectionsInNegotiation = 0
     }
 
+    reviewLog.review('permission.blocked', {
+      requestId: details.requestId,
+      toolName: details.toolName,
+      reasonCode: 'user-denied',
+    })
     return { block: true, reason: 'Permission denied by user.' }
   }
 
@@ -254,12 +326,14 @@ function installAutoReviewExtension(
   pi.on('session_start', (_event, context) => {
     generation?.controller.abort()
     redirectionsInNegotiation = 0
+    sessionId = randomUUID()
     sessionRuntime = {
       cwd: context.cwd,
       registry: context.modelRegistry,
       sessionManager: context.sessionManager,
     }
 
+    reviewLog.review('permission.session_start', { value: context.cwd })
     const result = loadConfig(context.cwd)
     reportIssues(result)
     try {
@@ -277,6 +351,7 @@ function installAutoReviewExtension(
   })
 
   pi.on('session_shutdown', () => {
+    reviewLog.review('permission.session_shutdown')
     generation?.controller.abort()
     generation = undefined
     sessionRuntime = undefined
