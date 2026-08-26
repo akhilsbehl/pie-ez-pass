@@ -8,12 +8,20 @@ A [Pi](https://github.com/earendil-works/pi) extension that provides standalone 
 
 The extension uses Pi's native `tool_call` hook. It does not depend on or register with another permission system.
 
+Path-based write exemptions are enforced in code, not by asking the reviewer
+model to recognise trusted directories. Paths are resolved relative to the
+session working directory, with path-segment boundaries enforced.
+
 - The reviewer can `allow` a call. Pi executes it without a prompt.
 - The reviewer can `redirect` a call. The tool is blocked and the main model receives a concrete narrower instruction.
 - After two redirects in one negotiation, the third redirect escalates to the user.
 - The reviewer can `escalate` a call. Pi shows its native confirmation dialog.
 - Reviewer failures, invalid responses, timeouts, and unavailable configuration escalate. If no UI is available, the call is blocked.
 - User confirmation applies to that call only. There are no session approvals.
+- Explicit `edit` and `write` targets in the agent's current working directory,
+  `/tmp`, `~/tmp`, `~/.richie`, `~/.pi`, and `~/warchives` bypass model review
+  deterministically. `bash` remains reviewed because its write target cannot be
+  determined safely from the command string.
 - Tool calls other than `bash`, `edit`, and `write` pass through unchanged.
 
 Pi already supplies the required UI through `ctx.ui.confirm`; this package does not install a custom TUI.

@@ -12,6 +12,7 @@ import { registerAutoReviewCommand } from './command.js'
 import { AutoReviewConfigStore } from './config-store.js'
 import { createPermissionReviewer } from './reviewer.js'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
+import { isDeterministicallyAllowedWritePath } from './write-policy.js'
 
 interface ReviewerFactoryOptions {
   config: AutoReviewConfig
@@ -32,6 +33,7 @@ interface ReviewerGeneration {
 }
 
 interface SessionRuntime {
+  cwd: string
   registry: ModelRegistry
   sessionManager: Pick<SessionManager, 'buildContextEntries'>
 }
@@ -152,6 +154,17 @@ function installAutoReviewExtension(
       return {}
     }
 
+    const details = buildPermissionDetails(event)
+    if (
+      (event.toolName === 'edit' || event.toolName === 'write') &&
+      details.path !== undefined &&
+      sessionRuntime !== undefined &&
+      isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)
+    ) {
+      redirectionsInNegotiation = 0
+      return {}
+    }
+
     const current = generation
     if (current === undefined || current.config === undefined) {
       return {
@@ -159,8 +172,6 @@ function installAutoReviewExtension(
         reason: 'Automatic permission review is unavailable because its configuration is invalid.',
       }
     }
-
-    const details = buildPermissionDetails(event)
     let verdict: Awaited<ReturnType<ReviewAuthorizer>>
     try {
       verdict = await current.authorize(details, reviewLog)
@@ -244,6 +255,7 @@ function installAutoReviewExtension(
     generation?.controller.abort()
     redirectionsInNegotiation = 0
     sessionRuntime = {
+      cwd: context.cwd,
       registry: context.modelRegistry,
       sessionManager: context.sessionManager,
     }

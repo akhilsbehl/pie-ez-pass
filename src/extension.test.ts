@@ -17,7 +17,7 @@ function makePi() {
 
 function makeContext(confirm: boolean) {
   return {
-    cwd: '/tmp/project',
+    cwd: '/workspace/project',
     modelRegistry: {} as never,
     sessionManager: { buildContextEntries: vi.fn(() => []) },
     hasUI: true,
@@ -57,6 +57,77 @@ const toolCall = {
 }
 
 describe('standalone tool-call permission boundary', () => {
+  it('allows writes in the session working directory without invoking the reviewer', async () => {
+    const { pi, reviewer } = startExtension('escalate')
+    const context = makeContext(false)
+
+    const result = await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      toolName: 'write',
+      input: { path: 'src/index.ts', content: 'export {}' },
+    }, context)
+
+    expect(result).toEqual({})
+    expect(reviewer).not.toHaveBeenCalled()
+    expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
+
+  it('uses the session-start working directory for relative write paths', async () => {
+    const { pi, reviewer } = startExtension('escalate')
+    const context = makeContext(false)
+    context.cwd = '/workspace/other'
+
+    const result = await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      toolName: 'write',
+      input: { path: 'src/index.ts', content: 'export {}' },
+    }, context)
+
+    expect(result).toEqual({})
+    expect(reviewer).not.toHaveBeenCalled()
+  })
+
+  it('allows writes in the fixed operator directories without invoking the reviewer', async () => {
+    const { pi, reviewer } = startExtension('escalate')
+    const context = makeContext(false)
+
+    const result = await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      toolName: 'edit',
+      input: { path: '/tmp/output.txt', oldText: 'old', newText: 'new' },
+    }, context)
+
+    expect(result).toEqual({})
+    expect(reviewer).not.toHaveBeenCalled()
+  })
+
+  it('continues reviewing writes outside the deterministic allowlist', async () => {
+    const { pi, reviewer } = startExtension('allow')
+    const context = makeContext(false)
+
+    const result = await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      toolName: 'write',
+      input: { path: '/workspace/other/output.txt', content: 'export {}' },
+    }, context)
+
+    expect(result).toEqual({})
+    expect(reviewer).toHaveBeenCalledTimes(1)
+  })
+
+  it('continues reviewing bash commands even when they mention an allowed directory', async () => {
+    const { pi, reviewer } = startExtension('allow')
+    const context = makeContext(false)
+
+    const result = await pi.handlers.get('tool_call')?.({
+      ...toolCall,
+      input: { command: 'printf hello > /tmp/output.txt' },
+    }, context)
+
+    expect(result).toEqual({})
+    expect(reviewer).toHaveBeenCalledTimes(1)
+  })
+
   it('allows a reviewer allow without prompting or logging', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)

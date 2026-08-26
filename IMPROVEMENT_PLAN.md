@@ -19,9 +19,16 @@ Use this fork as a standalone Pi permission layer rather than as an authorizer f
 
 ## Default policy
 
-The built-in policy treats these as low risk when their exact scope is understood:
+The extension deterministically allows explicit `edit` and `write` targets
+under the agent's session working directory and these personal directories,
+recursively:
 
-- `/tmp`, `~/tmp`, `~/.richie`, `~/.pi`, and `~/warchives`, recursively;
+- `/tmp`, `~/tmp`, `~/.richie`, `~/.pi`, and `~/warchives`.
+
+Shell commands remain subject to review because their write target cannot be
+classified safely from the command string. The built-in reviewer policy treats
+these as low risk:
+
 - ordinary, non-intrusive network access;
 - tools and skills from installed extensions;
 - verified user-requested local deletions and bounded changes;

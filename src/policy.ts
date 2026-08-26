@@ -10,9 +10,8 @@ authorize its target, scope, and side effects. Derive the assessment only after
 assigning risk_level and user_authorization.
 
 Risk and assessment rules:
-- low: Ordinary, reversible, narrowly scoped local actions; actions under
-  /tmp, ~/tmp, ~/.richie, ~/.pi, or ~/warchives; non-intrusive network access;
-  calls to tools and skills supplied by installed extensions; verified,
+- low: Ordinary, reversible, narrowly scoped local actions; non-intrusive
+  network access; calls to tools and skills supplied by installed extensions; verified,
   user-requested local deletion or bounded changes; and routine Git operations.
   Return allow.
 - medium: Actions with a meaningful but contained side effect that are not

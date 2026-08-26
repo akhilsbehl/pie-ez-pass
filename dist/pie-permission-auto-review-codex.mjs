@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 //#region node_modules/zod/v4/core/core.js
 var _a$1;
@@ -5056,9 +5056,8 @@ authorize its target, scope, and side effects. Derive the assessment only after
 assigning risk_level and user_authorization.
 
 Risk and assessment rules:
-- low: Ordinary, reversible, narrowly scoped local actions; actions under
-  /tmp, ~/tmp, ~/.richie, ~/.pi, or ~/warchives; non-intrusive network access;
-  calls to tools and skills supplied by installed extensions; verified,
+- low: Ordinary, reversible, narrowly scoped local actions; non-intrusive
+  network access; calls to tools and skills supplied by installed extensions; verified,
   user-requested local deletion or bounded changes; and routine Git operations.
   Return allow.
 - medium: Actions with a meaningful but contained side effect that are not
@@ -5602,6 +5601,38 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 	};
 }
 //#endregion
+//#region src/write-policy.ts
+const FIXED_WRITE_DIRECTORIES = [
+	"/tmp",
+	"tmp",
+	".richie",
+	".pi",
+	"warchives"
+];
+function expandHome(path) {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
+	return path;
+}
+function isWithinDirectory(directory, target) {
+	const remainder = relative(directory, target);
+	return remainder === "" || !remainder.startsWith("..") && !isAbsolute(remainder);
+}
+/**
+* Returns whether an explicit edit/write target is in a directory that Pi can
+* allow without invoking the model reviewer.
+*
+* Paths are matched lexically after resolving `..` segments. Shell commands
+* are intentionally not handled here because their write target cannot be
+* determined safely from the command string.
+*/
+function isDeterministicallyAllowedWritePath(requestedPath, cwd) {
+	if (requestedPath.length === 0 || cwd.length === 0) return false;
+	const sessionCwd = resolve(cwd);
+	const target = resolve(sessionCwd, expandHome(requestedPath));
+	return [sessionCwd, ...FIXED_WRITE_DIRECTORIES.map((directory) => directory === "/tmp" ? directory : resolve(homedir(), directory))].some((directory) => isWithinDirectory(directory, target));
+}
+//#endregion
 //#region src/extension.ts
 const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"bash",
@@ -5687,12 +5718,16 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	}
 	async function handleToolCall(event, context) {
 		if (!REVIEWED_TOOLS.has(event.toolName)) return {};
+		const details = buildPermissionDetails(event);
+		if ((event.toolName === "edit" || event.toolName === "write") && details.path !== void 0 && sessionRuntime !== void 0 && isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)) {
+			redirectionsInNegotiation = 0;
+			return {};
+		}
 		const current = generation;
 		if (current === void 0 || current.config === void 0) return {
 			block: true,
 			reason: "Automatic permission review is unavailable because its configuration is invalid."
 		};
-		const details = buildPermissionDetails(event);
 		let verdict;
 		try {
 			verdict = await current.authorize(details, reviewLog);
@@ -5765,6 +5800,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 		generation?.controller.abort();
 		redirectionsInNegotiation = 0;
 		sessionRuntime = {
+			cwd: context.cwd,
 			registry: context.modelRegistry,
 			sessionManager: context.sessionManager
 		};
