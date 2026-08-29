@@ -17,7 +17,6 @@ const configFields = [
   'model',
   'reasoning',
   'timeoutMs',
-  'includeBaselinePolicy',
   'additionalPolicy',
 ] as const
 
@@ -28,7 +27,6 @@ const fieldLabels: Record<ConfigField, string> = {
   model: 'Model',
   reasoning: 'Reasoning',
   timeoutMs: 'Timeout',
-  includeBaselinePolicy: 'Baseline policy',
   additionalPolicy: 'Additional policy',
 }
 
@@ -70,10 +68,6 @@ function resolveView(layers: ConfigLayers): ConfigView {
     model: layers.project.model ?? layers.global.model ?? DEFAULT_CONFIG.model,
     reasoning: layers.project.reasoning ?? layers.global.reasoning ?? DEFAULT_CONFIG.reasoning,
     timeoutMs: layers.project.timeoutMs ?? layers.global.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
-    includeBaselinePolicy:
-      layers.project.includeBaselinePolicy ??
-      layers.global.includeBaselinePolicy ??
-      DEFAULT_CONFIG.includeBaselinePolicy,
     ...(additionalPolicy === undefined ? {} : { additionalPolicy }),
   }
   return {
@@ -131,9 +125,6 @@ function removeField(config: AutoReviewConfigFile, field: ConfigField): AutoRevi
     case 'timeoutMs':
       delete next.timeoutMs
       break
-    case 'includeBaselinePolicy':
-      delete next.includeBaselinePolicy
-      break
     case 'additionalPolicy':
       delete next.additionalPolicy
       break
@@ -158,8 +149,6 @@ function setField(
       }
     case 'timeoutMs':
       return { ...config, timeoutMs: Number(value) }
-    case 'includeBaselinePolicy':
-      return { ...config, includeBaselinePolicy: Boolean(value) }
     case 'additionalPolicy':
       return { ...config, additionalPolicy: String(value) }
   }
@@ -257,23 +246,6 @@ async function editTimeout(
     return draft
   }
   return setField(draft, 'timeoutMs', value)
-}
-
-async function editBaselinePolicy(
-  ctx: ExtensionCommandContext,
-  draft: AutoReviewConfigFile,
-): Promise<AutoReviewConfigFile> {
-  const selected = await ctx.ui.select('Configure Baseline Policy', [INHERIT, 'Enabled', 'Disabled'])
-  if (selected === INHERIT) {
-    return removeField(draft, 'includeBaselinePolicy')
-  }
-  if (selected === 'Enabled') {
-    return setField(draft, 'includeBaselinePolicy', true)
-  }
-  if (selected === 'Disabled') {
-    return setField(draft, 'includeBaselinePolicy', false)
-  }
-  return draft
 }
 
 async function editAdditionalPolicy(
@@ -396,9 +368,6 @@ async function openSettingsMenu(ctx: ExtensionCommandContext, controller: AutoRe
       case 'timeoutMs':
         draft = await editTimeout(ctx, draft, view.config.timeoutMs)
         break
-      case 'includeBaselinePolicy':
-        draft = await editBaselinePolicy(ctx, draft)
-        break
       case 'additionalPolicy':
         draft = await editAdditionalPolicy(ctx, draft, view.config.additionalPolicy)
         break
@@ -487,7 +456,7 @@ async function resetConfig(
     ctx.ui.notify(`Config reset, but the current reviewer could not be replaced: ${activation.message}`, 'error')
   } else if (activation.kind === 'pending') {
     ctx.ui.notify(
-      `${scope} config reset. The inherited config will activate when pi-permission-system is ready.`,
+      `${scope} config reset. The inherited config will activate when the Pi session starts.`,
       'warning',
     )
   } else if (reset.loadResult.config === undefined) {

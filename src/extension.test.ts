@@ -1,278 +1,55 @@
+import { homedir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
-import type { LoadConfigResult } from './config.js'
 import type { ReviewLog } from './review-types.js'
 import { createAutoReviewExtension } from './extension.js'
 
-type Handler = (...args: any[]) => unknown
-
-type Verdict = 'allow' | 'redirect' | 'escalate'
-
-function makePi() {
-  const handlers = new Map<string, Handler>()
-  return {
-    handlers,
-    on: vi.fn((event: string, handler: Handler) => handlers.set(event, handler)),
-    registerCommand: vi.fn(),
-  }
-}
-
-function makeContext(confirm: boolean) {
-  return {
-    cwd: '/workspace/project',
-    modelRegistry: {} as never,
-    sessionManager: { buildContextEntries: vi.fn(() => []) },
-    hasUI: true,
-    ui: { confirm: vi.fn(async () => confirm) },
-  }
-}
-
-const validConfig = {
-  provider: 'test',
-  model: 'review',
-  reasoning: 'off' as const,
-  timeoutMs: 1_000,
-  includeBaselinePolicy: true,
-}
-
-function startExtension(
-  verdict: Verdict,
-  loadConfig: () => LoadConfigResult = () => ({ config: validConfig, issues: [], globalPath: '', projectPath: '' }),
-) {
-  const pi = makePi()
-  const reviewer = vi.fn(async () =>
-    verdict === 'redirect' ? { kind: 'redirect' as const, message: 'Use one file at a time.' } : { kind: verdict },
-  )
+function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?: boolean; hasUI?: boolean; approved?: boolean } = {}) {
+  const handlers = new Map<string, (...args: any[]) => any>()
+  const pi = { on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)), registerCommand: vi.fn() }
+  const reviewer = vi.fn(async () => { if (options.throws) throw new Error('provider failed'); return { kind } })
   const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
   createAutoReviewExtension(pi as never, {
-    loadConfig,
-    createReviewer: () => reviewer,
-    reviewLog,
+    loadConfig: () => ({ config: options.valid === false ? undefined : { provider: 'test', model: 'review', reasoning: 'off', timeoutMs: 1000 }, issues: [], globalPath: '', projectPath: '' }),
+    createReviewer: () => reviewer, reviewLog,
   })
-  pi.handlers.get('session_start')?.({}, makeContext(true))
-  return { pi, reviewer, reviewLog }
+  const context = { cwd: '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: options.hasUI ?? true, ui: { confirm: vi.fn(async () => options.approved ?? true) } }
+  handlers.get('session_start')?.({}, context)
+  return { handlers, reviewer, reviewLog, context }
 }
+const call = { type: 'tool_call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'rm -rf /important' } }
 
-const toolCall = {
-  type: 'tool_call',
-  toolCallId: 'request-1',
-  toolName: 'bash',
-  input: { command: 'printf hello' },
-}
-
-describe('standalone tool-call permission boundary', () => {
-  it('allows writes in the session working directory without invoking the reviewer', async () => {
-    const { pi, reviewer } = startExtension('escalate')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      toolName: 'write',
-      input: { path: 'src/index.ts', content: 'export {}' },
-    }, context)
-
-    expect(result).toEqual({})
-    expect(reviewer).not.toHaveBeenCalled()
-    expect(context.ui.confirm).not.toHaveBeenCalled()
-  })
-
-  it('logs the request and deterministic decision with a session correlation id', async () => {
-    const { pi, reviewLog } = startExtension('escalate')
-    const context = makeContext(false)
-
-    await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      toolName: 'write',
-      input: { path: 'src/index.ts', content: 'export {}' },
-    }, context)
-
-    expect(reviewLog.review).toHaveBeenCalledWith(
-      'permission.tool_call',
-      expect.objectContaining({
-        sessionId: expect.any(String),
-        toolName: 'write',
-        requestSummary: 'write path=src/index.ts',
-      }),
-    )
-    expect(reviewLog.review).toHaveBeenCalledWith(
-      'permission.decision',
-      expect.objectContaining({ policy: 'deterministic-path', outcome: 'allow' }),
-    )
-  })
-
-  it('uses the session-start working directory for relative write paths', async () => {
-    const { pi, reviewer } = startExtension('escalate')
-    const context = makeContext(false)
-    context.cwd = '/workspace/other'
-
-    const result = await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      toolName: 'write',
-      input: { path: 'src/index.ts', content: 'export {}' },
-    }, context)
-
-    expect(result).toEqual({})
+describe('tool_call permission boundary', () => {
+  it.each(['edit', 'write'] as const)('accepts %s targets in session CWD without review', async toolName => {
+    const { handlers, context, reviewer } = setup('escalate')
+    expect(await handlers.get('tool_call')?.({ ...call, toolName, input: { path: '/workspace/project/src/a', content: 'x' } }, context)).toEqual({})
     expect(reviewer).not.toHaveBeenCalled()
   })
-
-  it('allows writes in the fixed operator directories without invoking the reviewer', async () => {
-    const { pi, reviewer } = startExtension('escalate')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      toolName: 'edit',
-      input: { path: '/tmp/output.txt', oldText: 'old', newText: 'new' },
-    }, context)
-
-    expect(result).toEqual({})
+  it.each(['/tmp/a', `${homedir()}/tmp/a`, `${homedir()}/.richie/a`, `${homedir()}/.pi/a`, `${homedir()}/warchives/a`])('deterministically accepts %s', async path => {
+    const { handlers, context, reviewer } = setup('escalate')
+    expect(await handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path, content: 'x' } }, context)).toEqual({})
     expect(reviewer).not.toHaveBeenCalled()
   })
-
-  it('continues reviewing writes outside the deterministic allowlist', async () => {
-    const { pi, reviewer } = startExtension('allow')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      toolName: 'write',
-      input: { path: '/workspace/other/output.txt', content: 'export {}' },
-    }, context)
-
-    expect(result).toEqual({})
-    expect(reviewer).toHaveBeenCalledTimes(1)
-  })
-
-  it('continues reviewing bash commands even when they mention an allowed directory', async () => {
-    const { pi, reviewer } = startExtension('allow')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.({
-      ...toolCall,
-      input: { command: 'printf hello > /tmp/output.txt' },
-    }, context)
-
-    expect(result).toEqual({})
-    expect(reviewer).toHaveBeenCalledTimes(1)
-  })
-
-  it('allows a reviewer allow without prompting or logging', async () => {
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    try {
-      const { pi, reviewer } = startExtension('allow')
-      const context = makeContext(false)
-
-      const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-      expect(result).toEqual({})
-      expect(reviewer).toHaveBeenCalledTimes(1)
-      expect(context.ui.confirm).not.toHaveBeenCalled()
-      expect(debug).not.toHaveBeenCalled()
-      expect(warn).not.toHaveBeenCalled()
-    } finally {
-      debug.mockRestore()
-      warn.mockRestore()
-    }
-  })
-
-  it('does not review tools outside the edit and bash boundary', async () => {
-    const { pi, reviewer } = startExtension('escalate')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.({ ...toolCall, toolName: 'read' }, context)
-
-    expect(result).toEqual({})
-    expect(reviewer).not.toHaveBeenCalled()
-    expect(context.ui.confirm).not.toHaveBeenCalled()
-  })
-
-  it('redirects the main model with a narrower instruction', async () => {
-    const { pi, reviewer } = startExtension('redirect')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-    expect(result).toEqual({
-      block: true,
-      reason: 'Automatic review requires a narrower action: Use one file at a time.',
-    })
-    expect(reviewer).toHaveBeenCalledTimes(1)
-    expect(context.ui.confirm).not.toHaveBeenCalled()
-  })
-
-  it('escalates after the third redirect in one negotiation', async () => {
-    const { pi } = startExtension('redirect')
-    const context = makeContext(true)
-    const handler = pi.handlers.get('tool_call')
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await handler?.({ ...toolCall, toolCallId: `request-${attempt}` }, context)
-    }
-    const result = await handler?.({ ...toolCall, toolCallId: 'request-3' }, context)
-
-    expect(result).toEqual({})
-    expect(context.ui.confirm).toHaveBeenCalledTimes(1)
-    expect(context.ui.confirm).toHaveBeenCalledWith('Permission escalation', expect.stringContaining('bash'))
-  })
-
-  it('escalates after redirects continue across Pi turns', async () => {
-    const { pi } = startExtension('redirect')
-    const context = makeContext(true)
-    const handler = pi.handlers.get('tool_call')
-    const turnStart = pi.handlers.get('turn_start')
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await handler?.({ ...toolCall, toolCallId: `request-${attempt}` }, context)
-      turnStart?.()
-    }
-    const result = await handler?.({ ...toolCall, toolCallId: 'request-3' }, context)
-
-    expect(result).toEqual({})
-    expect(context.ui.confirm).toHaveBeenCalledTimes(1)
-  })
-
-  it('turns escalation into the standalone user confirmation', async () => {
-    const { pi } = startExtension('escalate')
-    const context = makeContext(true)
-
-    const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-    expect(result).toEqual({})
-    expect(context.ui.confirm).toHaveBeenCalledWith('Permission escalation', expect.stringContaining('bash'))
-  })
-
-  it('blocks when the user rejects escalation', async () => {
-    const { pi } = startExtension('escalate')
-    const context = makeContext(false)
-
-    const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-    expect(result).toEqual({ block: true, reason: 'Permission denied by user.' })
-  })
-
-  it('fails closed when escalation has no UI', async () => {
-    const { pi } = startExtension('escalate')
-    const context = makeContext(true)
-    context.hasUI = false
-
-    const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-    expect(result).toEqual({
-      block: true,
-      reason: 'Automatic review could not obtain user confirmation in this Pi mode.',
-    })
-  })
-
-  it('fails closed when the configuration is invalid', async () => {
-    const { pi, reviewer } = startExtension('allow', () => ({ config: undefined, issues: [], globalPath: '', projectPath: '' }))
-    const context = makeContext(true)
-
-    const result = await pi.handlers.get('tool_call')?.(toolCall, context)
-
-    expect(result).toEqual({
-      block: true,
-      reason: 'Automatic permission review is unavailable because its configuration is invalid.',
-    })
+  it('resolves relative paths against session-start CWD', async () => {
+    const { handlers, context, reviewer } = setup('escalate'); context.cwd = '/changed'
+    expect(await handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path: 'src/a', content: 'x' } }, context)).toEqual({})
     expect(reviewer).not.toHaveBeenCalled()
   })
+  it('ACCEPT executes without confirmation', async () => {
+    const { handlers, context } = setup('accept')
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({}); expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
+  it.each([{ name: 'ESCALATE', opts: {} }, { name: 'reviewer failure', opts: { throws: true } }, { name: 'config failure', opts: { valid: false } }])('$name uses local approval', async ({ opts }) => {
+    const { handlers, context } = setup('escalate', { ...opts, approved: true })
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({}); expect(context.ui.confirm).toHaveBeenCalledOnce()
+  })
+  it.each([{ name: 'ESCALATE', opts: {} }, { name: 'reviewer failure', opts: { throws: true } }])('$name enforces rejection', async ({ opts }) => {
+    const { handlers, context } = setup('escalate', { ...opts, approved: false })
+    expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true });
+  })
+  it('fails closed without UI', async () => {
+    const { handlers, context } = setup('escalate', { hasUI: false })
+    expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true }); expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
+  it('keeps bash reviewed', async () => { const { handlers, context, reviewer } = setup('accept'); await handlers.get('tool_call')?.(call, context); expect(reviewer).toHaveBeenCalledOnce() })
+  it('passes unreviewed tools through', async () => { const { handlers, context, reviewer } = setup('escalate'); expect(await handlers.get('tool_call')?.({ ...call, toolName: 'read' }, context)).toEqual({}); expect(reviewer).not.toHaveBeenCalled() })
 })

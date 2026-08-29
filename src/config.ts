@@ -31,7 +31,6 @@ type AutoReviewConfigSchema = z.ZodObject<
       }>
     >
     timeoutMs: z.ZodDefault<z.ZodNumber>
-    includeBaselinePolicy: z.ZodDefault<z.ZodBoolean>
   },
   z.core.$strict
 >
@@ -42,7 +41,6 @@ const configFileShape = {
   model: z.string().trim().min(1).optional(),
   reasoning: z.enum(REASONING_LEVELS).optional(),
   timeoutMs: z.number().int().positive().max(300_000).optional(),
-  includeBaselinePolicy: z.boolean().optional(),
   additionalPolicy: z.string().trim().min(1).optional(),
 }
 
@@ -55,16 +53,6 @@ export const autoReviewConfigSchema: AutoReviewConfigSchema = z
     model: z.string().trim().min(1).default(DEFAULT_MODEL),
     reasoning: z.enum(REASONING_LEVELS).default('low'),
     timeoutMs: z.number().int().positive().max(300_000).default(DEFAULT_TIMEOUT_MS),
-    includeBaselinePolicy: z.boolean().default(true),
-  })
-  .superRefine((config, context) => {
-    if (!config.includeBaselinePolicy && config.additionalPolicy === undefined) {
-      context.addIssue({
-        code: 'custom',
-        message: 'additionalPolicy is required when includeBaselinePolicy is false',
-        path: ['additionalPolicy'],
-      })
-    }
   })
 
 export type AutoReviewConfig = z.infer<typeof autoReviewConfigSchema>
@@ -75,7 +63,6 @@ export interface AutoReviewConfigFile {
   model?: string | undefined
   reasoning?: (typeof REASONING_LEVELS)[number] | undefined
   timeoutMs?: number | undefined
-  includeBaselinePolicy?: boolean | undefined
   additionalPolicy?: string | undefined
 }
 
@@ -234,22 +221,5 @@ export function buildAutoReviewJsonSchema(): Record<string, unknown> {
     target: 'draft-2020-12',
     io: 'input',
   })
-  return {
-    $schema,
-    $id: CONFIG_SCHEMA_URL,
-    ...schema,
-    allOf: [
-      {
-        if: {
-          properties: {
-            includeBaselinePolicy: { const: false },
-          },
-          required: ['includeBaselinePolicy'],
-        },
-        then: {
-          required: ['additionalPolicy'],
-        },
-      },
-    ],
-  }
+  return { $schema, $id: CONFIG_SCHEMA_URL, ...schema }
 }

@@ -7,7 +7,6 @@ const config = {
   model: 'review',
   reasoning: 'off' as const,
   timeoutMs: 1_000,
-  includeBaselinePolicy: true,
 }
 
 const details = (): ReviewPermissionDetails => ({
@@ -55,22 +54,16 @@ function makeReviewer(response: string, providerError = false) {
   return { authorize, provider }
 }
 
-describe('standalone reviewer outcomes', () => {
-  it('maps model allow to allow', async () => {
-    const { authorize } = makeReviewer('{"outcome":"allow"}')
+describe('reviewer outcomes', () => {
+  it('maps model ACCEPT to accept', async () => {
+    const { authorize } = makeReviewer('{"outcome":"ACCEPT","rationale":"Routine."}')
 
-    await expect(authorize(details(), makeLog())).resolves.toEqual({ kind: 'allow' })
-  })
-
-  it('maps model redirect to a redirect instruction', async () => {
-    const { authorize } = makeReviewer('{"outcome":"redirect","redirect":"Use one file.","rationale":"Scope is broad."}')
-
-    await expect(authorize(details(), makeLog())).resolves.toEqual({ kind: 'redirect', message: 'Use one file.' })
+    await expect(authorize(details(), makeLog())).resolves.toEqual({ kind: 'accept' })
   })
 
   it('maps model escalation to escalation with prompt context', async () => {
     const request = details()
-    const { authorize } = makeReviewer('{"outcome":"escalate","rationale":"This is destructive."}')
+    const { authorize } = makeReviewer('{"outcome":"ESCALATE","rationale":"This is destructive."}')
 
     await expect(authorize(request, makeLog())).resolves.toEqual({ kind: 'escalate' })
     expect(request.message).toContain('This is destructive.')

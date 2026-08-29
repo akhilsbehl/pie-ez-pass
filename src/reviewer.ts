@@ -173,7 +173,7 @@ function writeFailure(
     provider: runtime.config.provider,
     model: runtime.config.model,
     policy: 'model-review',
-    outcome: 'escalate',
+    outcome: 'ESCALATE',
     errorCategory: failure.category,
     durationMs,
   }
@@ -209,7 +209,7 @@ function annotatePermissionPrompt(
 ): void {
   const rationale = assessment.rationale.slice(0, MAX_DISPLAY_RATIONALE_LENGTH)
   const suffix = assessment.rationale.length > MAX_DISPLAY_RATIONALE_LENGTH ? '…' : ''
-  details.message = `${details.message}\n\n[Automatic review — advisory]\nRisk: ${assessment.riskLevel}\nUser authorization: ${assessment.userAuthorization}\nRationale: ${rationale}${suffix}`
+  details.message = `${details.message}\n\n[Automatic review — advisory]\nRationale: ${rationale}${suffix}`
 }
 
 async function runReview(
@@ -329,23 +329,13 @@ export function createPermissionReviewer(
         provider: runtime.config.provider,
         model: runtime.config.model,
         policy: 'model-review',
-        riskLevel: assessment.riskLevel,
-        userAuthorization: assessment.userAuthorization,
         outcome: assessment.outcome,
         rationale: assessment.rationale,
-        redirect: assessment.redirect,
         durationMs,
       })
 
-      if (assessment.outcome === 'allow') {
-        return { kind: 'allow' }
-      }
-
-      if (assessment.outcome === 'redirect') {
-        return {
-          kind: 'redirect',
-          message: assessment.redirect ?? assessment.rationale,
-        }
+      if (assessment.outcome === 'ACCEPT') {
+        return { kind: 'accept' }
       }
 
       // Surface escalation context in the native confirmation prompt.
