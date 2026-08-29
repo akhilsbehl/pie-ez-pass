@@ -21,7 +21,6 @@ type AutoReviewConfigSchema = z.ZodObject<{
     max: 'max';
   }>>;
   timeoutMs: z.ZodDefault<z.ZodNumber>;
-  includeBaselinePolicy: z.ZodDefault<z.ZodBoolean>;
 }, z.core.$strict>;
 declare const autoReviewConfigSchema: AutoReviewConfigSchema;
 type AutoReviewConfig = z.infer<typeof autoReviewConfigSchema>;
@@ -68,10 +67,7 @@ interface ReviewLog {
   debug(event: string, details?: Record<string, unknown>): void;
 }
 type ReviewVerdict = {
-  kind: 'allow';
-} | {
-  kind: 'redirect';
-  message: string;
+  kind: 'accept';
 } | {
   kind: 'escalate';
 };

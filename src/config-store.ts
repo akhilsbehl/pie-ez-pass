@@ -1,5 +1,5 @@
 import type { AutoReviewConfigFile, AutoReviewConfigPaths, ConfigIssue, LoadConfigResult } from './config.js'
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   CONFIG_SCHEMA_URL,
@@ -165,8 +165,13 @@ export class AutoReviewConfigStore {
     const tempPath = `${snapshot.path}.tmp`
     try {
       this.fileSystem.mkdir(dirname(snapshot.path))
-      this.fileSystem.writeFile(tempPath, source)
-      this.fileSystem.rename(tempPath, snapshot.path)
+      if (snapshot.scope === 'global' && this.fileSystem === defaultFileSystem && lstatSync(snapshot.path, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        // Renaming over a symlink replaces its inode rather than updating its target.
+        this.fileSystem.writeFile(snapshot.path, source)
+      } else {
+        this.fileSystem.writeFile(tempPath, source)
+        this.fileSystem.rename(tempPath, snapshot.path)
+      }
     } catch (error) {
       this.cleanupTempFile(tempPath)
       return {

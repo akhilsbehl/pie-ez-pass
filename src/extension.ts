@@ -42,7 +42,6 @@ interface SessionRuntime {
 }
 
 const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
-const MAX_REDIRECTIONS_PER_NEGOTIATION = 2
 
 function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.
@@ -95,7 +94,7 @@ function invalidConfigReviewer(): ReviewAuthorizer {
       toolCallId: details.toolCallId,
       toolName: details.toolName,
       policy: 'configuration',
-      outcome: 'escalate',
+      outcome: 'ESCALATE',
       errorCategory: 'config-invalid',
     })
     return { kind: 'escalate' }
@@ -135,7 +134,6 @@ function installAutoReviewExtension(
 
   let sessionRuntime: SessionRuntime | undefined
   let generation: ReviewerGeneration | undefined
-  let redirectionsInNegotiation = 0
 
   function createGeneration(config: AutoReviewConfig | undefined): ReviewerGeneration | undefined {
     if (sessionRuntime === undefined) {
@@ -198,97 +196,50 @@ function installAutoReviewExtension(
       sessionRuntime !== undefined &&
       isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)
     ) {
-      redirectionsInNegotiation = 0
       reviewLog.review('permission.decision', {
         requestId: details.requestId,
         toolName: details.toolName,
         policy: 'deterministic-path',
-        outcome: 'allow',
+        outcome: 'ACCEPT',
       })
       return {}
     }
 
     const current = generation
+    let verdict: Awaited<ReturnType<ReviewAuthorizer>> = { kind: 'escalate' }
+    let failureReason: string | undefined
     if (current === undefined || current.config === undefined) {
-      reviewLog.review('permission.blocked', {
-        requestId: details.requestId,
-        toolName: details.toolName,
-        reasonCode: 'config-invalid',
+      failureReason = 'Automatic permission review is unavailable because its configuration is invalid.'
+      reviewLog.review('permission.escalated', {
+        requestId: details.requestId, toolName: details.toolName, outcome: 'ESCALATE', reasonCode: 'config-invalid',
       })
-      return {
-        block: true,
-        reason: 'Automatic permission review is unavailable because its configuration is invalid.',
-      }
-    }
-    let verdict: Awaited<ReturnType<ReviewAuthorizer>>
-    try {
-      verdict = await current.authorize(details, reviewLog)
-    } catch (error) {
-      ignoreDiagnostic(`review failed: ${error instanceof Error ? error.message : String(error)}`)
-      reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'authorizer-error' })
-      verdict = { kind: 'escalate' }
-    }
-
-    if (verdict.kind === 'allow') {
-      redirectionsInNegotiation = 0
-      return {}
-    }
-
-    if (verdict.kind === 'redirect' && redirectionsInNegotiation < MAX_REDIRECTIONS_PER_NEGOTIATION) {
-      redirectionsInNegotiation += 1
-      reviewLog.review('permission.blocked', {
-        requestId: details.requestId,
-        toolName: details.toolName,
-        outcome: 'redirect',
-        reasonCode: 'redirect',
-      })
-      return {
-        block: true,
-        reason: `Automatic review requires a narrower action: ${verdict.message}`,
+    } else {
+      try {
+        verdict = await current.authorize(details, reviewLog)
+      } catch (error) {
+        failureReason = 'Automatic permission review failed; human approval is required.'
+        ignoreDiagnostic(`review failed: ${error instanceof Error ? error.message : String(error)}`)
+        reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'authorizer-error' })
       }
     }
 
-    if (verdict.kind === 'redirect') {
-      details.message = `${details.message}\n\nThe model proposed a narrower alternative twice without resolving the request.\nSuggested alternative: ${verdict.message}`
-    }
-
+    if (verdict.kind === 'accept') return {}
+    reviewLog.review('permission.escalated', {
+      requestId: details.requestId, toolName: details.toolName, outcome: 'ESCALATE',
+    })
     if (!context.hasUI) {
-      redirectionsInNegotiation = 0
-      reviewLog.review('permission.blocked', {
-        requestId: details.requestId,
-        toolName: details.toolName,
-        reasonCode: 'no-ui',
-      })
-      return {
-        block: true,
-        reason: 'Automatic review could not obtain user confirmation in this Pi mode.',
-      }
+      return { block: true, reason: failureReason ?? 'Human confirmation is required, but no interactive UI is available.' }
     }
-
     try {
       const approved = await context.ui.confirm('Permission escalation', details.message)
-      redirectionsInNegotiation = 0
-      reviewLog.review('permission.user_decision', {
-        requestId: details.requestId,
-        toolName: details.toolName,
-        policy: 'user-confirmation',
-        outcome: approved ? 'approved' : 'denied',
+      reviewLog.review('permission.human_decision', {
+        requestId: details.requestId, toolName: details.toolName, humanDecision: approved ? 'APPROVED' : 'REJECTED',
       })
-      if (approved) {
-        return {}
-      }
+      return approved ? {} : { block: true, reason: 'Permission rejected by user.' }
     } catch (error) {
-      ignoreDiagnostic(`permission confirmation failed: ${error instanceof Error ? error.message : String(error)}`)
-      reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'user-confirmation-error' })
-      redirectionsInNegotiation = 0
+      reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'confirmation-error' })
+      return { block: true, reason: 'Human confirmation failed; permission was not granted.' }
     }
-
-    reviewLog.review('permission.blocked', {
-      requestId: details.requestId,
-      toolName: details.toolName,
-      reasonCode: 'user-denied',
-    })
-    return { block: true, reason: 'Permission denied by user.' }
   }
 
   function applyConfig(result: LoadConfigResult): AutoReviewActivationResult {
@@ -319,13 +270,11 @@ function installAutoReviewExtension(
     const previous = generation
     generation = candidate
     previous?.controller.abort()
-    redirectionsInNegotiation = 0
     return { kind: 'active' }
   }
 
   pi.on('session_start', (_event, context) => {
     generation?.controller.abort()
-    redirectionsInNegotiation = 0
     sessionId = randomUUID()
     sessionRuntime = {
       cwd: context.cwd,
@@ -346,16 +295,12 @@ function installAutoReviewExtension(
 
   pi.on('tool_call', handleToolCall)
 
-  pi.on('turn_start', () => {
-    // Redirect negotiations can span multiple Pi turns.
-  })
 
   pi.on('session_shutdown', () => {
     reviewLog.review('permission.session_shutdown')
     generation?.controller.abort()
     generation = undefined
     sessionRuntime = undefined
-    redirectionsInNegotiation = 0
   })
 
   registerAutoReviewCommand(pi, {

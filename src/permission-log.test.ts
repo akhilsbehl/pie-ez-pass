@@ -22,19 +22,17 @@ describe('persistent permission log', () => {
     log.review('auto_review.decision', {
       requestId: 'request-1',
       toolName: 'bash',
-      outcome: 'escalate',
-      riskLevel: 'high',
-      userAuthorization: 'unknown',
+      outcome: 'ESCALATE',
+      riskLevel: 'legacy-must-not-persist',
+      userAuthorization: 'legacy-must-not-persist',
       rationale: 'The command uses a bearer token=secret-token.',
-      redirect: 'Use a narrower target.',
       durationMs: 42,
     })
-    log.review('permission.user_decision', { requestId: 'request-1', outcome: 'denied' })
-    log.review('permission.blocked', { requestId: 'request-1', reasonCode: 'user-denied' })
+    log.review('permission.escalated', { requestId: 'request-1', outcome: 'ESCALATE' })
     log.debug('auto_review.failure', { requestId: 'request-1', errorCategory: 'provider-error' })
 
     const lines = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
-    expect(lines).toHaveLength(5)
+    expect(lines).toHaveLength(4)
     expect(lines[0]).toMatchObject({ schemaVersion: 1, event: 'permission.tool_call', requestId: 'request-1', toolName: 'bash', inputKeys: ['command'] })
     expect(lines[0]).toHaveProperty('inputSha256')
     expect(lines[0]).toHaveProperty('valueSha256')
@@ -43,15 +41,14 @@ describe('persistent permission log', () => {
     expect(JSON.stringify(lines[0])).not.toContain('secret-token')
     expect(lines[1]).toMatchObject({
       event: 'auto_review.decision',
-      outcome: 'escalate',
-      riskLevel: 'high',
+      outcome: 'ESCALATE',
       rationale: 'The command uses a Bearer [REDACTED]',
-      redirect: 'Use a narrower target.',
       durationMs: 42,
     })
-    expect(lines[2]).toMatchObject({ event: 'permission.user_decision', outcome: 'denied' })
-    expect(lines[3]).toMatchObject({ event: 'permission.blocked', reasonCode: 'user-denied' })
-    expect(lines[4]).toMatchObject({ event: 'auto_review.failure', errorCategory: 'provider-error' })
+    expect(lines[1]).not.toHaveProperty('riskLevel')
+    expect(lines[1]).not.toHaveProperty('userAuthorization')
+    expect(lines[2]).toMatchObject({ event: 'permission.escalated', outcome: 'ESCALATE' })
+    expect(lines[3]).toMatchObject({ event: 'auto_review.failure', errorCategory: 'provider-error' })
     expect(statSync(path).mode & 0o777).toBe(0o600)
     expect(statSync(join(directory, 'runtime')).mode & 0o777).toBe(0o700)
   })

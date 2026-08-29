@@ -2,27 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { parseReviewAssessment } from './verdict.js'
 
 describe('review assessment parser', () => {
-  it('accepts allow', () => {
-    expect(parseReviewAssessment('{"outcome":"allow"}')).toMatchObject({ outcome: 'allow', riskLevel: 'low' })
+  it('accepts exactly ACCEPT and ESCALATE', () => {
+    expect(parseReviewAssessment('{"outcome":"ACCEPT","rationale":"Routine."}')).toEqual({ outcome: 'ACCEPT', rationale: 'Routine.' })
+    expect(parseReviewAssessment('{"outcome":"ESCALATE","rationale":"Destructive."}')).toEqual({ outcome: 'ESCALATE', rationale: 'Destructive.' })
   })
-
-  it('requires and preserves a redirect instruction', () => {
-    expect(
-      parseReviewAssessment(
-        '{"outcome":"redirect","risk_level":"medium","redirect":"Limit the edit to one file.","rationale":"The scope is broad."}',
-      ),
-    ).toMatchObject({
-      outcome: 'redirect',
-      riskLevel: 'medium',
-      redirect: 'Limit the edit to one file.',
-    })
-    expect(() => parseReviewAssessment('{"outcome":"redirect"}')).toThrow()
-  })
-
-  it('accepts escalation', () => {
-    expect(parseReviewAssessment('{"outcome":"escalate","rationale":"This needs user confirmation."}')).toMatchObject({
-      outcome: 'escalate',
-      rationale: 'This needs user confirmation.',
-    })
+  it('rejects legacy and incomplete verdicts', () => {
+    expect(() => parseReviewAssessment('{"outcome":"allow","rationale":"Routine."}')).toThrow()
+    expect(() => parseReviewAssessment('{"outcome":"redirect","redirect":"Narrow it.","rationale":"Broad."}')).toThrow()
+    expect(() => parseReviewAssessment('{"outcome":"ACCEPT"}')).toThrow()
   })
 })

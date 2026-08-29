@@ -8,15 +8,17 @@ describe('personal default review policy', () => {
       model: 'codex-auto-review',
       reasoning: 'low',
       timeoutMs: 90_000,
-      includeBaselinePolicy: true,
     })
 
-    expect(prompt).toContain('"outcome": "allow" | "redirect" | "escalate"')
-    expect(prompt).toContain('routine Git operations')
+    expect(prompt).toContain('\"outcome\": \"ACCEPT\" | \"ESCALATE\"')
+    expect(prompt).toContain('Strongly default to ACCEPT')
     expect(prompt).not.toContain('~/.richie')
     expect(prompt).not.toContain('permission-system authorizer')
     expect(prompt).not.toContain('{"kind":"defer"}')
-    expect(prompt).not.toContain('permission-system')
+    expect(prompt).toContain("extension's local\nconfirmation UI")
+    expect(prompt).toContain('source is exactly "user"')
+    expect(prompt).toContain('weighs strongly toward ACCEPT')
+    expect(prompt).toContain('does not erase an unmistakable severe footgun')
     expect(prompt).not.toContain('medim')
   })
 
@@ -26,7 +28,6 @@ describe('personal default review policy', () => {
       model: 'codex-auto-review',
       reasoning: 'low',
       timeoutMs: 90_000,
-      includeBaselinePolicy: true,
       additionalPolicy: 'Prefer explicit confirmation for this test action.',
     })
 

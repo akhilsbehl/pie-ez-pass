@@ -21,10 +21,8 @@ export interface PermissionLogRecord {
   requestSummary?: string
   policy?: string
   outcome?: string
-  riskLevel?: string
-  userAuthorization?: string
+  humanDecision?: string
   rationale?: string
-  redirect?: string
   provider?: string
   model?: string
   errorCategory?: string
@@ -76,8 +74,7 @@ export function createPermissionLog(filePath = PERMISSION_LOG_PATH): ReviewLog {
       'operation',
       'policy',
       'outcome',
-      'riskLevel',
-      'userAuthorization',
+      'humanDecision',
       'provider',
       'model',
       'errorCategory',
@@ -85,7 +82,7 @@ export function createPermissionLog(filePath = PERMISSION_LOG_PATH): ReviewLog {
     ] as const) {
       copyString(key)
     }
-    for (const key of ['requestSummary', 'rationale', 'redirect'] as const) {
+    for (const key of ['requestSummary', 'rationale'] as const) {
       copyString(key, true)
     }
     if (typeof details.durationMs === 'number' && Number.isFinite(details.durationMs)) record.durationMs = details.durationMs

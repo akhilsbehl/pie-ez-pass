@@ -23,10 +23,7 @@ export interface ReviewLog {
   debug(event: string, details?: Record<string, unknown>): void
 }
 
-export type ReviewVerdict =
-  | { kind: 'allow' }
-  | { kind: 'redirect'; message: string }
-  | { kind: 'escalate' }
+export type ReviewVerdict = { kind: 'accept' } | { kind: 'escalate' }
 
 export type ReviewAuthorizer = (
   details: ReviewPermissionDetails,
