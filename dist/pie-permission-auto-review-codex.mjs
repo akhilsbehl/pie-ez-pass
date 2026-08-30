@@ -3972,14 +3972,6 @@ const ZodObject = /*@__PURE__*/ $constructor("ZodObject", (inst, def) => {
 		}
 	});
 });
-function object(shape, params) {
-	const def = {
-		type: "object",
-		shape: shape ?? {},
-		...normalizeParams(params)
-	};
-	return new ZodObject(def);
-}
 function strictObject(shape, params) {
 	return new ZodObject({
 		type: "object",
@@ -4280,18 +4272,16 @@ const DEFAULT_RULES = {
 	}
 };
 const ruleListSchema = array(string().trim().min(1)).default([]);
-const rulesSchema = object({
-	allow: object({
-		commands: ruleListSchema,
-		paths: ruleListSchema
-	}).default({
+const ruleSideSchema = strictObject({
+	commands: ruleListSchema,
+	paths: ruleListSchema
+});
+const rulesSchema = strictObject({
+	allow: ruleSideSchema.default({
 		commands: [],
 		paths: []
 	}),
-	block: object({
-		commands: ruleListSchema,
-		paths: ruleListSchema
-	}).default({
+	block: ruleSideSchema.default({
 		commands: [],
 		paths: []
 	})
@@ -5614,11 +5604,14 @@ function commandMatches(pattern, command) {
 	const expression = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
 	return new RegExp(`^${expression}$`).test(command.trim());
 }
+function expandHome(path) {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
+	return path;
+}
 function expandRoot(rule, cwd) {
 	if (rule === "$CWD") return resolve(cwd);
-	if (rule === "~") return homedir();
-	if (rule.startsWith("~/")) return resolve(homedir(), rule.slice(2));
-	return resolve(rule);
+	return resolve(expandHome(rule));
 }
 function within(root, target) {
 	const remainder = relative(root, target);
@@ -5633,7 +5626,7 @@ function decidePermanentRule(toolName, value, config, cwd) {
 		allowed = rules.allow.commands.some((pattern) => commandMatches(pattern, value));
 		blocked = rules.block.commands.some((pattern) => commandMatches(pattern, value));
 	} else if (toolName === "edit" || toolName === "write") {
-		const target = resolve(cwd, value);
+		const target = resolve(cwd, expandHome(value));
 		allowed = rules.allow.paths.some((rule) => within(expandRoot(rule, cwd), target));
 		blocked = rules.block.paths.some((rule) => within(expandRoot(rule, cwd), target));
 	} else return "none";

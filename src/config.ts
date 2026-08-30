@@ -25,9 +25,10 @@ export const DEFAULT_RULES = {
 }
 
 const ruleListSchema = z.array(z.string().trim().min(1)).default([])
-const rulesSchema = z.object({
-  allow: z.object({ commands: ruleListSchema, paths: ruleListSchema }).default({ commands: [], paths: [] }),
-  block: z.object({ commands: ruleListSchema, paths: ruleListSchema }).default({ commands: [], paths: [] }),
+const ruleSideSchema = z.strictObject({ commands: ruleListSchema, paths: ruleListSchema })
+const rulesSchema = z.strictObject({
+  allow: ruleSideSchema.default({ commands: [], paths: [] }),
+  block: ruleSideSchema.default({ commands: [], paths: [] }),
 })
 
 const configFileShape = {

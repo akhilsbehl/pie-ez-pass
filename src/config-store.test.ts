@@ -33,6 +33,16 @@ describe('global permanent permission config', () => {
   })
 
   it.each([
+    { rules: { typo: {} } },
+    { rules: { allow: { commands: [], paths: [], typo: true } } },
+    { rules: { block: { commands: [], paths: [], typo: true } } },
+  ])('fails closed for unknown nested rule fields (%s)', global => {
+    const result = memoryStore(global).load('/work/repo')
+    expect(result.config).toBeUndefined()
+    expect(result.issues[0]?.message).toContain('Unrecognized key')
+  })
+
+  it.each([
     [{ rules: { allow: { commands: [' git status '], paths: [] }, block: { commands: ['git status'], paths: [] } } }, 'command'],
     [{ rules: { allow: { commands: [], paths: ['/tmp'] }, block: { commands: [], paths: ['/tmp'] } } }, 'equal'],
     [{ rules: { allow: { commands: [], paths: ['/blocked/safe'] }, block: { commands: [], paths: ['/blocked'] } } }, 'ancestor'],

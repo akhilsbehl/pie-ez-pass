@@ -9,11 +9,15 @@ function commandMatches(pattern: string, command: string): boolean {
   return new RegExp(`^${expression}$`).test(command.trim())
 }
 
+function expandHome(path: string): string {
+  if (path === '~') return homedir()
+  if (path.startsWith('~/')) return resolve(homedir(), path.slice(2))
+  return path
+}
+
 function expandRoot(rule: string, cwd: string): string {
   if (rule === '$CWD') return resolve(cwd)
-  if (rule === '~') return homedir()
-  if (rule.startsWith('~/')) return resolve(homedir(), rule.slice(2))
-  return resolve(rule)
+  return resolve(expandHome(rule))
 }
 
 function within(root: string, target: string): boolean {
@@ -30,7 +34,7 @@ export function decidePermanentRule(toolName: string, value: string | undefined,
     allowed = rules.allow.commands.some(pattern => commandMatches(pattern, value))
     blocked = rules.block.commands.some(pattern => commandMatches(pattern, value))
   } else if (toolName === 'edit' || toolName === 'write') {
-    const target = resolve(cwd, value)
+    const target = resolve(cwd, expandHome(value))
     allowed = rules.allow.paths.some(rule => within(expandRoot(rule, cwd), target))
     blocked = rules.block.paths.some(rule => within(expandRoot(rule, cwd), target))
   } else return 'none'

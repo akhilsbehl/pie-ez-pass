@@ -25,12 +25,12 @@ declare const autoReviewConfigSchema: z.ZodObject<{
     allow: z.ZodDefault<z.ZodObject<{
       commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
       paths: z.ZodDefault<z.ZodArray<z.ZodString>>;
-    }, z.core.$strip>>;
+    }, z.core.$strict>>;
     block: z.ZodDefault<z.ZodObject<{
       commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
       paths: z.ZodDefault<z.ZodArray<z.ZodString>>;
-    }, z.core.$strip>>;
-  }, z.core.$strip>>;
+    }, z.core.$strict>>;
+  }, z.core.$strict>>;
 }, z.core.$strict>;
 type ParsedAutoReviewConfig = z.infer<typeof autoReviewConfigSchema>;
 type AutoReviewConfig = Omit<ParsedAutoReviewConfig, 'rules'> & {

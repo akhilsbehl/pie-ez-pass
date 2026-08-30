@@ -35,6 +35,20 @@ describe('tool_call permission boundary', () => {
     expect(await handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path: 'src/a', content: 'x' } }, context)).toEqual({})
     expect(reviewer).not.toHaveBeenCalled()
   })
+
+  it.each(['~', '~/tmp/a'])('expands tilde-form write target %s before allow matching', async path => {
+    const rules = { allow: { commands: [], paths: ['~'] }, block: { commands: [], paths: [] } } as typeof DEFAULT_RULES
+    const { handlers, context, reviewer } = setup('escalate', { rules })
+    expect(await handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path, content: 'x' } }, context)).toEqual({})
+    expect(reviewer).not.toHaveBeenCalled()
+  })
+
+  it('expands tilde-form edit targets before block matching', async () => {
+    const rules = { allow: { commands: [], paths: [] }, block: { commands: [], paths: ['~/private'] } } as unknown as typeof DEFAULT_RULES
+    const { handlers, context, reviewer } = setup('accept', { rules })
+    expect(await handlers.get('tool_call')?.({ ...call, toolName: 'edit', input: { path: '~/private/a' } }, context)).toMatchObject({ block: true })
+    expect(reviewer).not.toHaveBeenCalled()
+  })
   it('applies anchored command allow, block, and overlap decisions before model review', async () => {
     const rules = { allow: { commands: ['git show *', '*--version'], paths: [] }, block: { commands: ['git show secret*', 'sudo *'], paths: [] } } as typeof DEFAULT_RULES
     const allowed = setup('escalate', { rules }); expect(await allowed.handlers.get('tool_call')?.({ ...call, input: { command: ' git show HEAD ' } }, allowed.context)).toEqual({}); expect(allowed.reviewer).not.toHaveBeenCalled()
