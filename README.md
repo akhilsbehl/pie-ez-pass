@@ -72,4 +72,4 @@ Run `npm run typecheck`, `npm test`, and `npm run build`. Generated `dist/` file
 
 ## License and attribution
 
-[MIT](LICENSE). This project is an Akhil-owned personal-use adaptation of the MIT-licensed `pi-ez-pass` package from [mzwing/pi-packages](https://github.com/mzwing/pi-packages/tree/main/packages/pi-ez-pass). Preserve that attribution when redistributing.
+[MIT](LICENSE). This project is an Akhil-owned personal-use adaptation of the MIT-licensed `pi-permission-auto-review` package from [mzwing/pi-packages](https://github.com/mzwing/pi-packages/tree/main/packages/pi-ez-pass). Preserve that attribution when redistributing.
