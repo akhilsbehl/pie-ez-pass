@@ -13,7 +13,7 @@ import { registerAutoReviewCommand } from './command.js'
 import { AutoReviewConfigStore } from './config-store.js'
 import { createPermissionReviewer } from './reviewer.js'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
-import { isDeterministicallyAllowedWritePath } from './write-policy.js'
+import { decidePermanentRule } from './permission-rules.js'
 import { createPermissionLog } from './permission-log.js'
 
 interface ReviewerFactoryOptions {
@@ -190,22 +190,19 @@ function installAutoReviewExtension(
       inputKeys: Object.keys(asRecord(event.input)),
       value: details.value,
     })
-    if (
-      (event.toolName === 'edit' || event.toolName === 'write') &&
-      details.path !== undefined &&
-      sessionRuntime !== undefined &&
-      isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)
-    ) {
-      reviewLog.review('permission.decision', {
-        requestId: details.requestId,
-        toolName: details.toolName,
-        policy: 'deterministic-path',
-        outcome: 'ACCEPT',
-      })
+    const current = generation
+    const ruleDecision = current?.config !== undefined && sessionRuntime !== undefined
+      ? decidePermanentRule(event.toolName, event.toolName === 'bash' ? details.command : details.path, current.config, sessionRuntime.cwd)
+      : 'none'
+    if (ruleDecision === 'allow') {
+      reviewLog.review('permission.decision', { requestId: details.requestId, toolName: details.toolName, policy: 'permanent-rule', outcome: 'ACCEPT' })
       return {}
     }
+    if (ruleDecision === 'block') {
+      reviewLog.review('permission.decision', { requestId: details.requestId, toolName: details.toolName, policy: 'permanent-rule', outcome: 'BLOCK' })
+      return { block: true, reason: 'Blocked by a permanent permission rule.' }
+    }
 
-    const current = generation
     let verdict: Awaited<ReturnType<ReviewAuthorizer>> = { kind: 'escalate' }
     let failureReason: string | undefined
     if (current === undefined || current.config === undefined) {
@@ -213,7 +210,7 @@ function installAutoReviewExtension(
       reviewLog.review('permission.escalated', {
         requestId: details.requestId, toolName: details.toolName, outcome: 'ESCALATE', reasonCode: 'config-invalid',
       })
-    } else {
+    } else if (ruleDecision !== 'conflict') {
       try {
         verdict = await current.authorize(details, reviewLog)
       } catch (error) {
@@ -221,6 +218,8 @@ function installAutoReviewExtension(
         ignoreDiagnostic(`review failed: ${error instanceof Error ? error.message : String(error)}`)
         reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'authorizer-error' })
       }
+    } else {
+      failureReason = 'This call matches both allow and block command rules; explicit human confirmation is required.'
     }
 
     if (verdict.kind === 'accept') return {}
@@ -231,7 +230,10 @@ function installAutoReviewExtension(
       return { block: true, reason: failureReason ?? 'Human confirmation is required, but no interactive UI is available.' }
     }
     try {
-      const approved = await context.ui.confirm('Permission escalation', details.message)
+      const approved = await context.ui.confirm(
+        failureReason === undefined ? 'Permission escalation' : '⚠ Permission review unavailable',
+        failureReason === undefined ? details.message : `⚠ ${failureReason}\n\n${details.message}`,
+      )
       reviewLog.review('permission.human_decision', {
         requestId: details.requestId, toolName: details.toolName, humanDecision: approved ? 'APPROVED' : 'REJECTED',
       })

@@ -6,24 +6,36 @@ declare const DEFAULT_PROVIDER = "openai-codex";
 declare const DEFAULT_MODEL = "codex-auto-review";
 declare const DEFAULT_TIMEOUT_MS = 90000;
 declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json";
-type AutoReviewConfigSchema = z.ZodObject<{
+declare const autoReviewConfigSchema: z.ZodObject<{
   $schema: z.ZodOptional<z.ZodString>;
   additionalPolicy: z.ZodOptional<z.ZodString>;
   provider: z.ZodDefault<z.ZodString>;
   model: z.ZodDefault<z.ZodString>;
   reasoning: z.ZodDefault<z.ZodEnum<{
-    off: 'off';
-    minimal: 'minimal';
-    low: 'low';
-    medium: 'medium';
-    high: 'high';
-    xhigh: 'xhigh';
-    max: 'max';
+    high: "high";
+    low: "low";
+    max: "max";
+    medium: "medium";
+    minimal: "minimal";
+    off: "off";
+    xhigh: "xhigh";
   }>>;
   timeoutMs: z.ZodDefault<z.ZodNumber>;
+  rules: z.ZodDefault<z.ZodObject<{
+    allow: z.ZodDefault<z.ZodObject<{
+      commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
+      paths: z.ZodDefault<z.ZodArray<z.ZodString>>;
+    }, z.core.$strip>>;
+    block: z.ZodDefault<z.ZodObject<{
+      commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
+      paths: z.ZodDefault<z.ZodArray<z.ZodString>>;
+    }, z.core.$strip>>;
+  }, z.core.$strip>>;
 }, z.core.$strict>;
-declare const autoReviewConfigSchema: AutoReviewConfigSchema;
-type AutoReviewConfig = z.infer<typeof autoReviewConfigSchema>;
+type ParsedAutoReviewConfig = z.infer<typeof autoReviewConfigSchema>;
+type AutoReviewConfig = Omit<ParsedAutoReviewConfig, 'rules'> & {
+  rules?: ParsedAutoReviewConfig['rules'];
+};
 interface ConfigIssue {
   sourcePath: string;
   message: string;

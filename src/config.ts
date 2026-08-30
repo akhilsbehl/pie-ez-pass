@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
@@ -13,27 +13,22 @@ export const CONFIG_SCHEMA_URL =
 
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
-type AutoReviewConfigSchema = z.ZodObject<
-  {
-    $schema: z.ZodOptional<z.ZodString>
-    additionalPolicy: z.ZodOptional<z.ZodString>
-    provider: z.ZodDefault<z.ZodString>
-    model: z.ZodDefault<z.ZodString>
-    reasoning: z.ZodDefault<
-      z.ZodEnum<{
-        off: 'off'
-        minimal: 'minimal'
-        low: 'low'
-        medium: 'medium'
-        high: 'high'
-        xhigh: 'xhigh'
-        max: 'max'
-      }>
-    >
-    timeoutMs: z.ZodDefault<z.ZodNumber>
+export const DEFAULT_RULES = {
+  allow: {
+    commands: ['pwd', 'git status', 'git diff', 'git diff *', 'git log', 'git log *', 'git show', 'git show *', 'git rev-parse *', 'git ls-files', 'git ls-files *', 'npm test', 'npm test *', 'npm run typecheck', 'npm run build', 'npm run lint'],
+    paths: ['$CWD', '/tmp', '~/tmp', '~/.richie', '~/.pi', '~/warchives'],
   },
-  z.core.$strict
->
+  block: {
+    commands: ['sudo', 'sudo *', 'rm -rf /', 'rm -rf /*', 'git push --force', 'git push --force *', 'git push -f', 'git push -f *', 'git reset --hard', 'git reset --hard *', 'git clean -f', 'git clean -f *'],
+    paths: [],
+  },
+}
+
+const ruleListSchema = z.array(z.string().trim().min(1)).default([])
+const rulesSchema = z.object({
+  allow: z.object({ commands: ruleListSchema, paths: ruleListSchema }).default({ commands: [], paths: [] }),
+  block: z.object({ commands: ruleListSchema, paths: ruleListSchema }).default({ commands: [], paths: [] }),
+})
 
 const configFileShape = {
   $schema: z.string().min(1).optional(),
@@ -44,18 +39,21 @@ const configFileShape = {
   additionalPolicy: z.string().trim().min(1).optional(),
 }
 
-const autoReviewConfigFileSchema = z.strictObject(configFileShape)
+const autoReviewConfigFileSchema = z.strictObject({ ...configFileShape, rules: rulesSchema.optional() })
+const projectConfigFileSchema = z.strictObject(configFileShape)
 
-export const autoReviewConfigSchema: AutoReviewConfigSchema = z
+export const autoReviewConfigSchema = z
   .strictObject({
     ...configFileShape,
     provider: z.string().trim().min(1).default(DEFAULT_PROVIDER),
     model: z.string().trim().min(1).default(DEFAULT_MODEL),
     reasoning: z.enum(REASONING_LEVELS).default('low'),
     timeoutMs: z.number().int().positive().max(300_000).default(DEFAULT_TIMEOUT_MS),
+    rules: rulesSchema.default(() => structuredClone(DEFAULT_RULES)),
   })
 
-export type AutoReviewConfig = z.infer<typeof autoReviewConfigSchema>
+type ParsedAutoReviewConfig = z.infer<typeof autoReviewConfigSchema>
+export type AutoReviewConfig = Omit<ParsedAutoReviewConfig, 'rules'> & { rules?: ParsedAutoReviewConfig['rules'] }
 
 export interface AutoReviewConfigFile {
   $schema?: string | undefined
@@ -64,6 +62,7 @@ export interface AutoReviewConfigFile {
   reasoning?: (typeof REASONING_LEVELS)[number] | undefined
   timeoutMs?: number | undefined
   additionalPolicy?: string | undefined
+  rules?: { allow: { commands: string[]; paths: string[] }; block: { commands: string[]; paths: string[] } } | undefined
 }
 
 export interface ConfigIssue {
@@ -161,6 +160,7 @@ function readScope(
   path: string,
   readFile: (path: string) => string | undefined,
   issues: ConfigIssue[],
+  project = false,
 ): AutoReviewConfigFile | undefined {
   let source: string | undefined
   try {
@@ -177,7 +177,14 @@ function readScope(
     return {}
   }
 
-  const parsed = parseAutoReviewConfigFile(source, path)
+  const parsed = project
+    ? (() => {
+        let value: unknown
+        try { value = JSON.parse(source) } catch (error) { return { ok: false as const, issue: { sourcePath: path, message: `invalid JSON: ${error instanceof Error ? error.message : String(error)}` } } }
+        const result = projectConfigFileSchema.safeParse(value)
+        return result.success ? { ok: true as const, config: result.data } : { ok: false as const, issue: { sourcePath: path, message: formatZodIssue(result.error) } }
+      })()
+    : parseAutoReviewConfigFile(source, path)
   if (!parsed.ok) {
     issues.push(parsed.issue)
     return undefined
@@ -190,7 +197,7 @@ export function loadAutoReviewConfig(options: LoadConfigOptions): LoadConfigResu
   const readFile = options.readFile ?? defaultReadFile
   const issues: ConfigIssue[] = []
   const globalConfig = readScope(globalPath, readFile, issues)
-  const projectConfig = readScope(projectPath, readFile, issues)
+  const projectConfig = readScope(projectPath, readFile, issues, true)
 
   if (globalConfig === undefined || projectConfig === undefined) {
     return { config: undefined, issues, globalPath, projectPath }
@@ -208,12 +215,53 @@ export function loadAutoReviewConfig(options: LoadConfigOptions): LoadConfigResu
     return { config: undefined, issues, globalPath, projectPath }
   }
 
+  const config = normalizeAndValidateRules(merged.data, options.cwd, globalPath, issues)
   return {
-    config: merged.data,
+    config,
     issues,
     globalPath,
     projectPath,
   }
+}
+
+function within(root: string, child: string): boolean {
+  const remainder = relative(root, child)
+  return remainder === '' || (!remainder.startsWith('..') && !isAbsolute(remainder))
+}
+
+function normalizeAndValidateRules(config: ParsedAutoReviewConfig, cwd: string, sourcePath: string, issues: ConfigIssue[]): AutoReviewConfig | undefined {
+  const normalizeCommands = (values: string[]) => [...new Set(values.map(value => value.trim()))]
+  const expandPath = (value: string): string | undefined => {
+    if (value === '$CWD') return resolve(cwd)
+    if (value === '~') return homedir()
+    if (value.startsWith('~/')) return resolve(homedir(), value.slice(2))
+    return isAbsolute(value) ? resolve(value) : undefined
+  }
+  const allowCommands = normalizeCommands(config.rules.allow.commands)
+  const blockCommands = normalizeCommands(config.rules.block.commands)
+  if (allowCommands.some(pattern => blockCommands.includes(pattern))) {
+    issues.push({ sourcePath, message: 'identical normalized command patterns across allow and block are invalid' })
+    return undefined
+  }
+  const allowPathRules = [...new Set(config.rules.allow.paths)]
+  const blockPathRules = [...new Set(config.rules.block.paths)]
+  const allowPaths = allowPathRules.map(expandPath)
+  const blockPaths = blockPathRules.map(expandPath)
+  if (allowPaths.includes(undefined) || blockPaths.includes(undefined)) {
+    issues.push({ sourcePath, message: 'path rules must be absolute, ~/..., or exact $CWD' })
+    return undefined
+  }
+  const allows = allowPaths as string[]
+  const blocks = blockPaths as string[]
+  if (allows.some(allow => blocks.some(block => allow === block))) {
+    issues.push({ sourcePath, message: 'equal allow and block paths are invalid' })
+    return undefined
+  }
+  if (allows.some(allow => blocks.some(block => within(block, allow)))) {
+    issues.push({ sourcePath, message: 'block path ancestor with allow descendant is invalid' })
+    return undefined
+  }
+  return { ...config, rules: { allow: { commands: allowCommands, paths: allowPathRules }, block: { commands: blockCommands, paths: blockPathRules } } }
 }
 
 export function buildAutoReviewJsonSchema(): Record<string, unknown> {

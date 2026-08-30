@@ -13,9 +13,9 @@ The extension uses Pi's `tool_call` hook and Pi's local `ctx.ui.confirm` UI. Thi
 - Approval applies only to the current call; there are no session approvals.
 - Other tools pass through unchanged.
 
-### Deterministic write acceptance
+### Permanent rules
 
-Explicit `edit` and `write` paths under the session-start working directory, `/tmp`, `~/tmp`, `~/.richie`, `~/.pi`, and `~/warchives` bypass model review and are accepted deterministically. Relative paths resolve against the session-start working directory, and path-segment boundaries are enforced. `bash` always remains reviewed because command strings cannot safely establish a write target.
+User-owned global `config.json` may define `rules.allow.commands`, `rules.allow.paths`, `rules.block.commands`, and `rules.block.paths`. Project config cannot define rules. Bash uses command rules only; edit/write use only their explicit `path`. Command patterns are case-sensitive, trimmed, anchored to the full command, and `*` is the only wildcard. Path roots are lexical and recursive: absolute paths, `~/...`, or exact `$CWD` (the session-start working directory); symlinks are not resolved. Block rules win in narrower allowed path subtrees. A command matching both sides requires explicit confirmation and blocks without UI.
 
 ## Permission review log
 
@@ -40,7 +40,8 @@ Defaults:
   "provider": "openai-codex",
   "model": "codex-auto-review",
   "reasoning": "low",
-  "timeoutMs": 90000
+  "timeoutMs": 90000,
+  "rules": { "allow": { "commands": ["git status", "npm test", "npm test *"], "paths": ["$CWD", "/tmp", "~/tmp", "~/.richie", "~/.pi", "~/warchives"] }, "block": { "commands": ["sudo *", "git push --force *", "git reset --hard *"], "paths": [] } }
 }
 ```
 
@@ -49,7 +50,7 @@ Defaults:
 | Global | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json` |
 | Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json` |
 
-Project fields override global fields. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported fields are `provider`, `model`, `reasoning`, `timeoutMs`, and optional `additionalPolicy`. The primary safety prompt is mandatory; additional policy is appended to it. See [example config](config/config.example.json) and [JSON Schema](schemas/config.schema.json).
+Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, and optional `additionalPolicy`; global config additionally supports `rules`. Missing rule arrays use the restrained defaults shown in the example config. The primary safety prompt is mandatory; additional policy is appended to it. See [example config](config/config.example.json) and [JSON Schema](schemas/config.schema.json).
 
 Use the interactive settings command to edit and immediately apply configuration:
 

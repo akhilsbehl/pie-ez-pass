@@ -3,5 +3,52 @@
   "provider": "openai-codex",
   "model": "codex-auto-review",
   "reasoning": "low",
-  "timeoutMs": 90000
+  "timeoutMs": 90000,
+  "rules": {
+    "allow": {
+      "commands": [
+        "pwd",
+        "git status",
+        "git diff",
+        "git diff *",
+        "git log",
+        "git log *",
+        "git show",
+        "git show *",
+        "git rev-parse *",
+        "git ls-files",
+        "git ls-files *",
+        "npm test",
+        "npm test *",
+        "npm run typecheck",
+        "npm run build",
+        "npm run lint"
+      ],
+      "paths": [
+        "$CWD",
+        "/tmp",
+        "~/tmp",
+        "~/.richie",
+        "~/.pi",
+        "~/warchives"
+      ]
+    },
+    "block": {
+      "commands": [
+        "sudo",
+        "sudo *",
+        "rm -rf /",
+        "rm -rf /*",
+        "git push --force",
+        "git push --force *",
+        "git push -f",
+        "git push -f *",
+        "git reset --hard",
+        "git reset --hard *",
+        "git clean -f",
+        "git clean -f *"
+      ],
+      "paths": []
+    }
+  }
 }
