@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -4226,48 +4226,11 @@ const REASONING_LEVELS = [
 ];
 const DEFAULT_RULES = {
 	allow: {
-		commands: [
-			"pwd",
-			"git status",
-			"git diff",
-			"git diff *",
-			"git log",
-			"git log *",
-			"git show",
-			"git show *",
-			"git rev-parse *",
-			"git ls-files",
-			"git ls-files *",
-			"npm test",
-			"npm test *",
-			"npm run typecheck",
-			"npm run build",
-			"npm run lint"
-		],
-		paths: [
-			"$CWD",
-			"/tmp",
-			"~/tmp",
-			"~/.richie",
-			"~/.pi",
-			"~/warchives"
-		]
+		commands: [],
+		paths: []
 	},
 	block: {
-		commands: [
-			"sudo",
-			"sudo *",
-			"rm -rf /",
-			"rm -rf /*",
-			"git push --force",
-			"git push --force *",
-			"git push -f",
-			"git push -f *",
-			"git reset --hard",
-			"git reset --hard *",
-			"git clean -f",
-			"git clean -f *"
-		],
+		commands: [],
 		paths: []
 	}
 };
@@ -4436,10 +4399,6 @@ function loadAutoReviewConfig(options) {
 		projectPath
 	};
 }
-function within$1(root, child) {
-	const remainder = relative(root, child);
-	return remainder === "" || !remainder.startsWith("..") && !isAbsolute(remainder);
-}
 function normalizeAndValidateRules(config, cwd, sourcePath, issues) {
 	const normalizeCommands = (values) => [...new Set(values.map((value) => value.trim()))];
 	const expandPath = (value) => {
@@ -4477,10 +4436,19 @@ function normalizeAndValidateRules(config, cwd, sourcePath, issues) {
 		});
 		return;
 	}
-	if (allows.some((allow) => blocks.some((block) => within$1(block, allow)))) {
+	const canonical = (path) => {
+		try {
+			return realpathSync(path);
+		} catch {
+			return;
+		}
+	};
+	const allowCanonical = allows.map(canonical).filter((path) => path !== void 0);
+	const blockCanonical = blocks.map(canonical).filter((path) => path !== void 0);
+	if (allowCanonical.some((allow) => blockCanonical.includes(allow))) {
 		issues.push({
 			sourcePath,
-			message: "block path ancestor with allow descendant is invalid"
+			message: "equal allow and block canonical path aliases are invalid"
 		});
 		return;
 	}
@@ -5600,9 +5568,33 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 }
 //#endregion
 //#region src/permission-rules.ts
+function compareScore(left, right) {
+	if (left === void 0) return right === void 0 ? 0 : -1;
+	if (right === void 0) return 1;
+	for (let index = 0; index < Math.max(left.length, right.length); index++) {
+		const difference = (left[index] ?? 0) - (right[index] ?? 0);
+		if (difference !== 0) return difference;
+	}
+	return 0;
+}
 function commandMatches(pattern, command) {
 	const expression = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
 	return new RegExp(`^${expression}$`).test(command.trim());
+}
+function commandScore(pattern) {
+	const stars = [...pattern].filter((character) => character === "*").length;
+	return [
+		stars === 0 ? 1 : 0,
+		pattern.length - stars,
+		-stars
+	];
+}
+function bestCommand(patterns, command) {
+	return patterns.reduce((best, pattern) => {
+		if (!commandMatches(pattern, command)) return best;
+		const score = commandScore(pattern);
+		return compareScore(score, best) > 0 ? score : best;
+	}, void 0);
 }
 function expandHome(path) {
 	if (path === "~") return homedir();
@@ -5613,26 +5605,50 @@ function expandRoot(rule, cwd) {
 	if (rule === "$CWD") return resolve(cwd);
 	return resolve(expandHome(rule));
 }
+function resolveExisting(path) {
+	const missing = [];
+	let cursor = path;
+	for (;;) try {
+		return resolve(realpathSync(cursor), ...missing.reverse());
+	} catch {
+		const parent = dirname(cursor);
+		if (parent === cursor) return void 0;
+		missing.push(cursor.slice(parent.length + (parent.endsWith("/") ? 0 : 1)));
+		cursor = parent;
+	}
+}
+function aliases(path) {
+	const canonical = resolveExisting(path);
+	return canonical === void 0 || canonical === path ? [path] : [path, canonical];
+}
 function within(root, target) {
 	const remainder = relative(root, target);
 	return remainder === "" || !remainder.startsWith("..") && !isAbsolute(remainder);
 }
+function bestPath(patterns, value, cwd) {
+	const targets = aliases(resolve(cwd, expandHome(value)));
+	return patterns.reduce((best, pattern) => {
+		const rootAliases = aliases(expandRoot(pattern, cwd));
+		if (!rootAliases.some((rootAlias) => targets.some((target) => within(rootAlias, target)))) return best;
+		const score = [Math.max(...rootAliases.map((alias) => alias.split("/").filter(Boolean).length))];
+		return compareScore(score, best) > 0 ? score : best;
+	}, void 0);
+}
+function decide(allow, block) {
+	const comparison = compareScore(allow, block);
+	if (allow !== void 0 && block !== void 0 && comparison === 0) return "conflict";
+	if (comparison > 0) return "allow";
+	if (comparison < 0) return "block";
+	return "none";
+}
 function decidePermanentRule(toolName, value, config, cwd) {
 	if (value === void 0) return "none";
-	let allowed;
-	let blocked;
 	const rules = config.rules ?? DEFAULT_RULES;
 	if (toolName === "bash") {
-		allowed = rules.allow.commands.some((pattern) => commandMatches(pattern, value));
-		blocked = rules.block.commands.some((pattern) => commandMatches(pattern, value));
-	} else if (toolName === "edit" || toolName === "write") {
-		const target = resolve(cwd, expandHome(value));
-		allowed = rules.allow.paths.some((rule) => within(expandRoot(rule, cwd), target));
-		blocked = rules.block.paths.some((rule) => within(expandRoot(rule, cwd), target));
-	} else return "none";
-	if (allowed && blocked) return toolName === "bash" ? "conflict" : "block";
-	if (blocked) return "block";
-	if (allowed) return "allow";
+		if (/[;&|\n\r`]/.test(value) || value.includes("$(") || value.includes("<(") || value.includes(">(")) return "none";
+		return decide(bestCommand(rules.allow.commands, value), bestCommand(rules.block.commands, value));
+	}
+	if (toolName === "edit" || toolName === "write") return decide(bestPath(rules.allow.paths, value, cwd), bestPath(rules.block.paths, value, cwd));
 	return "none";
 }
 //#endregion
@@ -5870,7 +5886,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 				errorCategory: "authorizer-error"
 			});
 		}
-		else failureReason = "This call matches both allow and block command rules; explicit human confirmation is required.";
+		else failureReason = "This call has equally specific allow and block rules; explicit human confirmation is required.";
 		if (verdict.kind === "accept") return {};
 		reviewLog.review("permission.escalated", {
 			requestId: details.requestId,

@@ -219,7 +219,7 @@ function installAutoReviewExtension(
         reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'authorizer-error' })
       }
     } else {
-      failureReason = 'This call matches both allow and block command rules; explicit human confirmation is required.'
+      failureReason = 'This call has equally specific allow and block rules; explicit human confirmation is required.'
     }
 
     if (verdict.kind === 'accept') return {}

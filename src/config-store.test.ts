@@ -19,11 +19,9 @@ function memoryStore(global: unknown, project: unknown = {}) {
 }
 
 describe('global permanent permission config', () => {
-  it('loads seeded permission defaults when rules are omitted', () => {
+  it('loads empty permission defaults when rules are omitted', () => {
     const result = memoryStore({}).load('/work/repo')
-    expect(result.config?.rules?.allow.paths).toEqual(['$CWD', '/tmp', '~/tmp', '~/.richie', '~/.pi', '~/warchives'])
-    expect(result.config?.rules?.block.paths).toEqual([])
-    expect(result.config?.rules?.allow.commands).toContain('npm test')
+    expect(result.config?.rules).toEqual({ allow: { commands: [], paths: [] }, block: { commands: [], paths: [] } })
   })
 
   it('rejects permissions from project config', () => {
@@ -45,7 +43,6 @@ describe('global permanent permission config', () => {
   it.each([
     [{ rules: { allow: { commands: [' git status '], paths: [] }, block: { commands: ['git status'], paths: [] } } }, 'command'],
     [{ rules: { allow: { commands: [], paths: ['/tmp'] }, block: { commands: [], paths: ['/tmp'] } } }, 'equal'],
-    [{ rules: { allow: { commands: [], paths: ['/blocked/safe'] }, block: { commands: [], paths: ['/blocked'] } } }, 'ancestor'],
     [{ rules: { allow: { commands: [], paths: ['relative'] }, block: { commands: [], paths: [] } } }, 'absolute'],
   ])('fails closed for inconsistent rules (%s)', (global, message) => {
     const result = memoryStore(global).load('/work/repo')
@@ -53,10 +50,21 @@ describe('global permanent permission config', () => {
     expect(result.issues[0]?.message).toContain(message)
   })
 
-  it('allows a narrower blocked subtree and deduplicates same-side rules', () => {
-    const result = memoryStore({ rules: { allow: { commands: ['git status', 'git status'], paths: ['/work'] }, block: { commands: [], paths: ['/work/private'] } } }).load('/work/repo')
+  it('allows narrower opposite-side subtrees and deduplicates same-side rules', () => {
+    const result = memoryStore({ rules: { allow: { commands: ['git status', 'git status'], paths: ['/blocked/safe'] }, block: { commands: [], paths: ['/blocked'] } } }).load('/work/repo')
     expect(result.config?.rules?.allow.commands).toEqual(['git status'])
-    expect(result.config?.rules?.block.paths).toEqual(['/work/private'])
+    expect(result.config?.rules?.allow.paths).toEqual(['/blocked/safe'])
+  })
+
+  it('fails closed for opposite lexical paths resolving to the same canonical root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'auto-review-rules-'))
+    const alias = join(root, 'alias')
+    const target = join(root, 'target')
+    mkdirSync(target)
+    symlinkSync(target, alias)
+    const result = memoryStore({ rules: { allow: { commands: [], paths: [alias] }, block: { commands: [], paths: [target] } } }).load(root)
+    expect(result.config).toBeUndefined()
+    expect(result.issues[0]?.message).toContain('canonical')
   })
 })
 

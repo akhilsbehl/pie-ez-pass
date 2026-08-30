@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 
@@ -14,14 +14,8 @@ export const CONFIG_SCHEMA_URL =
 export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export const DEFAULT_RULES = {
-  allow: {
-    commands: ['pwd', 'git status', 'git diff', 'git diff *', 'git log', 'git log *', 'git show', 'git show *', 'git rev-parse *', 'git ls-files', 'git ls-files *', 'npm test', 'npm test *', 'npm run typecheck', 'npm run build', 'npm run lint'],
-    paths: ['$CWD', '/tmp', '~/tmp', '~/.richie', '~/.pi', '~/warchives'],
-  },
-  block: {
-    commands: ['sudo', 'sudo *', 'rm -rf /', 'rm -rf /*', 'git push --force', 'git push --force *', 'git push -f', 'git push -f *', 'git reset --hard', 'git reset --hard *', 'git clean -f', 'git clean -f *'],
-    paths: [],
-  },
+  allow: { commands: [], paths: [] },
+  block: { commands: [], paths: [] },
 }
 
 const ruleListSchema = z.array(z.string().trim().min(1)).default([])
@@ -225,11 +219,6 @@ export function loadAutoReviewConfig(options: LoadConfigOptions): LoadConfigResu
   }
 }
 
-function within(root: string, child: string): boolean {
-  const remainder = relative(root, child)
-  return remainder === '' || (!remainder.startsWith('..') && !isAbsolute(remainder))
-}
-
 function normalizeAndValidateRules(config: ParsedAutoReviewConfig, cwd: string, sourcePath: string, issues: ConfigIssue[]): AutoReviewConfig | undefined {
   const normalizeCommands = (values: string[]) => [...new Set(values.map(value => value.trim()))]
   const expandPath = (value: string): string | undefined => {
@@ -258,8 +247,13 @@ function normalizeAndValidateRules(config: ParsedAutoReviewConfig, cwd: string, 
     issues.push({ sourcePath, message: 'equal allow and block paths are invalid' })
     return undefined
   }
-  if (allows.some(allow => blocks.some(block => within(block, allow)))) {
-    issues.push({ sourcePath, message: 'block path ancestor with allow descendant is invalid' })
+  const canonical = (path: string): string | undefined => {
+    try { return realpathSync(path) } catch { return undefined }
+  }
+  const allowCanonical = allows.map(canonical).filter((path): path is string => path !== undefined)
+  const blockCanonical = blocks.map(canonical).filter((path): path is string => path !== undefined)
+  if (allowCanonical.some(allow => blockCanonical.includes(allow))) {
+    issues.push({ sourcePath, message: 'equal allow and block canonical path aliases are invalid' })
     return undefined
   }
   return { ...config, rules: { allow: { commands: allowCommands, paths: allowPathRules }, block: { commands: blockCommands, paths: blockPathRules } } }

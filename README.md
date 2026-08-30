@@ -15,7 +15,9 @@ The extension uses Pi's `tool_call` hook and Pi's local `ctx.ui.confirm` UI. Thi
 
 ### Permanent rules
 
-User-owned global `config.json` may define `rules.allow.commands`, `rules.allow.paths`, `rules.block.commands`, and `rules.block.paths`. Project config cannot define rules. Bash uses command rules only; edit/write use only their explicit `path`. Command patterns are case-sensitive, trimmed, anchored to the full command, and `*` is the only wildcard. Path roots are lexical and recursive: absolute paths, `~/...`, or exact `$CWD` (the session-start working directory); symlinks are not resolved. Block rules win in narrower allowed path subtrees. A command matching both sides requires explicit confirmation and blocks without UI.
+User-owned global `config.json` may define `rules.allow.commands`, `rules.allow.paths`, `rules.block.commands`, and `rules.block.paths`. Project config cannot define rules. Bash uses command rules only; edit/write use only their explicit `path`. Command patterns are case-sensitive, trimmed, anchored to the full command, and `*` is the only wildcard. Commands containing `;`, `&`, `|`, a newline, carriage return, backtick, `$(`, `<(`, or `>(` always go to model review before any permanent command rule is considered; this intentionally includes quoted or escaped-looking operators. Path roots are recursive absolute paths, `~/...`, or exact `$CWD` (the session-start working directory), and match both their lexical spelling and freshly resolved symlink target (including nonexistent descendants below an existing ancestor).
+
+For both commands and paths, the most-specific matching rule wins symmetrically. Exact command patterns beat wildcard patterns; wildcard specificity uses more non-`*` characters, then fewer `*`. Narrower path roots beat broader roots. A remaining equal allow/block tie requires explicit human confirmation and blocks without UI.
 
 ## Permission review log
 
@@ -41,7 +43,7 @@ Defaults:
   "model": "codex-auto-review",
   "reasoning": "low",
   "timeoutMs": 90000,
-  "rules": { "allow": { "commands": ["git status", "npm test", "npm test *"], "paths": ["$CWD", "/tmp", "~/tmp", "~/.richie", "~/.pi", "~/warchives"] }, "block": { "commands": ["sudo *", "git push --force *", "git reset --hard *"], "paths": [] } }
+  "rules": { "allow": { "commands": [], "paths": [] }, "block": { "commands": [], "paths": [] } }
 }
 ```
 
@@ -50,7 +52,7 @@ Defaults:
 | Global | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json` |
 | Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json` |
 
-Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, and optional `additionalPolicy`; global config additionally supports `rules`. Missing rule arrays use the restrained defaults shown in the example config. The primary safety prompt is mandatory; additional policy is appended to it. See [example config](config/config.example.json) and [JSON Schema](schemas/config.schema.json).
+Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, and optional `additionalPolicy`; global config additionally supports `rules`. Missing rule arrays default to empty. The [example config](config/config.example.json) contains restrained suggested read/test/build allows, suggested path roots, and a small set of high-risk Bash blocks; users must manually copy the rules they want into their live global config. The extension never seeds or rewrites the live user config. The primary safety prompt is mandatory; additional policy is appended to it. See the [JSON Schema](schemas/config.schema.json).
 
 Use the interactive settings command to edit and immediately apply configuration:
 
