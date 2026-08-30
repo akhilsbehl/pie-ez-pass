@@ -78,7 +78,8 @@ function bestPath(patterns: string[], value: string, cwd: string): Score | undef
     const rootAliases = aliases(root)
     const matches = rootAliases.some(rootAlias => targets.some(target => within(rootAlias, target)))
     if (!matches) return best
-    const score: Score = [Math.max(...rootAliases.map(alias => alias.split('/').filter(Boolean).length))]
+    const specificityRoot = resolveExisting(root) ?? root
+    const score: Score = [specificityRoot.split('/').filter(Boolean).length]
     return compareScore(score, best) > 0 ? score : best
   }, undefined)
 }

@@ -5628,9 +5628,9 @@ function within(root, target) {
 function bestPath(patterns, value, cwd) {
 	const targets = aliases(resolve(cwd, expandHome(value)));
 	return patterns.reduce((best, pattern) => {
-		const rootAliases = aliases(expandRoot(pattern, cwd));
-		if (!rootAliases.some((rootAlias) => targets.some((target) => within(rootAlias, target)))) return best;
-		const score = [Math.max(...rootAliases.map((alias) => alias.split("/").filter(Boolean).length))];
+		const root = expandRoot(pattern, cwd);
+		if (!aliases(root).some((rootAlias) => targets.some((target) => within(rootAlias, target)))) return best;
+		const score = [(resolveExisting(root) ?? root).split("/").filter(Boolean).length];
 		return compareScore(score, best) > 0 ? score : best;
 	}, void 0);
 }

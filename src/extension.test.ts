@@ -121,6 +121,33 @@ describe('tool_call permission boundary', () => {
     }
   })
 
+  it.each([
+    { narrowSide: 'allow' as const, reverse: false },
+    { narrowSide: 'allow' as const, reverse: true },
+    { narrowSide: 'block' as const, reverse: false },
+    { narrowSide: 'block' as const, reverse: true },
+  ])('uses canonical specificity when a deep lexical broad-root alias competes with a narrower $narrowSide rule (reverse=$reverse)', async ({ narrowSide, reverse }) => {
+    const root = mkdtempSync(join(tmpdir(), 'auto-review-specificity-'))
+    const broad = join(root, 'real')
+    const narrow = join(broad, 'private')
+    const deepParent = join(root, 'deep', 'one', 'two', 'three')
+    const deepAlias = join(deepParent, 'alias')
+    const unrelated = join(root, 'unrelated')
+    mkdirSync(narrow, { recursive: true })
+    mkdirSync(deepParent, { recursive: true })
+    mkdirSync(unrelated)
+    symlinkSync(broad, deepAlias)
+    const broadRules = reverse ? [unrelated, deepAlias] : [deepAlias, unrelated]
+    const rules = {
+      allow: { commands: [], paths: narrowSide === 'allow' ? [narrow] : broadRules },
+      block: { commands: [], paths: narrowSide === 'block' ? [narrow] : broadRules },
+    } as unknown as typeof DEFAULT_RULES
+    const run = setup(narrowSide === 'allow' ? 'escalate' : 'accept', { rules, cwd: root })
+    const result = await run.handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path: join(narrow, 'file') } }, run.context)
+    expect(result).toEqual(narrowSide === 'allow' ? {} : { block: true, reason: 'Blocked by a permanent permission rule.' })
+    expect(run.reviewer).not.toHaveBeenCalled()
+  })
+
   it('ACCEPT executes without confirmation', async () => {
     const { handlers, context } = setup('accept')
     expect(await handlers.get('tool_call')?.(call, context)).toEqual({}); expect(context.ui.confirm).not.toHaveBeenCalled()
