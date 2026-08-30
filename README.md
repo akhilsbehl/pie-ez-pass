@@ -1,4 +1,4 @@
-# pie-permission-auto-review-codex
+# pie-ez-pass
 
 A [Pi](https://github.com/earendil-works/pi) extension providing Codex-style review for `bash`, `edit`, and `write` tool calls.
 
@@ -49,19 +49,19 @@ Defaults:
 
 | Scope | Path |
 | --- | --- |
-| Global | `~/.pi/agent/extensions/pie-permission-auto-review-codex/config.json` |
-| Project | `<cwd>/.pi/extensions/pie-permission-auto-review-codex/config.json` |
+| Global | `~/.pi/agent/extensions/pie-ez-pass/config.json` |
+| Project | `<cwd>/.pi/extensions/pie-ez-pass/config.json` |
 
 Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, and optional `additionalPolicy`; global config additionally supports `rules`. Missing rule arrays default to empty. The [example config](config/config.example.json) contains restrained suggested read/test/build allows, suggested path roots, and a small set of high-risk Bash blocks; users must manually copy the rules they want into their live global config. The extension never seeds or rewrites the live user config. The primary safety prompt is mandatory; additional policy is appended to it. See the [JSON Schema](schemas/config.schema.json).
 
 Use the interactive settings command to edit and immediately apply configuration:
 
 ```text
-/permission-auto-review
-/permission-auto-review show
-/permission-auto-review path
-/permission-auto-review reset [global|project]
-/permission-auto-review help
+/ez-pass
+/ez-pass show
+/ez-pass path
+/ez-pass reset [global|project]
+/ez-pass help
 ```
 
 Global config symlinks are supported: saving updates the target while preserving the symlink. `codex-auto-review` derives from Pi's `openai-codex` provider and reuses the existing Codex login.
@@ -72,4 +72,4 @@ Run `npm run typecheck`, `npm test`, and `npm run build`. Generated `dist/` file
 
 ## License and attribution
 
-[MIT](LICENSE). This project is an Akhil-owned personal-use adaptation of the MIT-licensed `pi-permission-auto-review` package from [mzwing/pi-packages](https://github.com/mzwing/pi-packages/tree/main/packages/pi-permission-auto-review). Preserve that attribution when redistributing.
+[MIT](LICENSE). This project is an Akhil-owned personal-use adaptation of the MIT-licensed `pi-ez-pass` package from [mzwing/pi-packages](https://github.com/mzwing/pi-packages/tree/main/packages/pi-ez-pass). Preserve that attribution when redistributing.

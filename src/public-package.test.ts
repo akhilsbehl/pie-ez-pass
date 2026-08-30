@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import permissionAutoReviewExtension from '../dist/pie-permission-auto-review-codex.mjs'
+import permissionAutoReviewExtension from '../dist/pie-ez-pass.mjs'
 
-const CONFIRMATION_EVENT = 'pie-permission-auto-review-codex:permission-confirmation:v1'
+const CONFIRMATION_EVENT = 'pie-ez-pass:permission-confirmation:v1'
 
 type Handler = (...args: any[]) => any
 

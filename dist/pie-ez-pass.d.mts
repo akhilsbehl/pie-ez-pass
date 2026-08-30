@@ -1,11 +1,11 @@
 import { ExtensionAPI, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 //#region src/config.d.ts
-declare const EXTENSION_ID = "pie-permission-auto-review-codex";
+declare const EXTENSION_ID = "pie-ez-pass";
 declare const DEFAULT_PROVIDER = "openai-codex";
 declare const DEFAULT_MODEL = "codex-auto-review";
 declare const DEFAULT_TIMEOUT_MS = 90000;
-declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json";
+declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json";
 declare const autoReviewConfigSchema: z.ZodObject<{
   $schema: z.ZodOptional<z.ZodString>;
   additionalPolicy: z.ZodOptional<z.ZodString>;

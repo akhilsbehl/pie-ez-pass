@@ -76,7 +76,7 @@ describe('AutoReviewConfigStore save', () => {
     const globalPath = store.getPaths(root).globalPath
     const target = join(root, 'shared-config.json')
     writeFileSync(target, '{}\n')
-    mkdirSync(join(agentDir, 'extensions', 'pie-permission-auto-review-codex'), { recursive: true })
+    mkdirSync(join(agentDir, 'extensions', 'pie-ez-pass'), { recursive: true })
     symlinkSync(target, globalPath)
 
     const result = store.save(store.readScope(root, 'global'), { timeoutMs: 1234 })

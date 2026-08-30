@@ -42,7 +42,7 @@ interface SessionRuntime {
 }
 
 const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
-export const PERMISSION_CONFIRMATION_EVENT = 'pie-permission-auto-review-codex:permission-confirmation:v1'
+export const PERMISSION_CONFIRMATION_EVENT = 'pie-ez-pass:permission-confirmation:v1'
 
 function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.

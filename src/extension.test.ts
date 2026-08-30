@@ -156,7 +156,7 @@ describe('tool_call permission boundary', () => {
     const { handlers, context, pi } = setup('escalate', { approved: true })
     context.ui.confirm.mockImplementation(async () => {
       expect(pi.events.emit).toHaveBeenLastCalledWith(
-        'pie-permission-auto-review-codex:permission-confirmation:v1',
+        'pie-ez-pass:permission-confirmation:v1',
         { requestId: 'call-1', active: true },
       )
       return true
@@ -164,8 +164,8 @@ describe('tool_call permission boundary', () => {
 
     expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
     expect(pi.events.emit.mock.calls).toEqual([
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: true }],
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: false }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'call-1', active: true }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'call-1', active: false }],
     ])
   })
 
@@ -174,7 +174,7 @@ describe('tool_call permission boundary', () => {
 
     expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
     expect(pi.events.emit).toHaveBeenLastCalledWith(
-      'pie-permission-auto-review-codex:permission-confirmation:v1',
+      'pie-ez-pass:permission-confirmation:v1',
       { requestId: 'call-1', active: false },
     )
   })
@@ -185,8 +185,8 @@ describe('tool_call permission boundary', () => {
 
     expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
     expect(pi.events.emit.mock.calls).toEqual([
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: true }],
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: false }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'call-1', active: true }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'call-1', active: false }],
     ])
   })
 
@@ -197,10 +197,10 @@ describe('tool_call permission boundary', () => {
     await handlers.get('tool_call')?.({ ...call, toolCallId: 'request-b' }, context)
 
     expect(pi.events.emit.mock.calls).toEqual([
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-a', active: true }],
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-a', active: false }],
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-b', active: true }],
-      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-b', active: false }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'request-a', active: true }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'request-a', active: false }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'request-b', active: true }],
+      ['pie-ez-pass:permission-confirmation:v1', { requestId: 'request-b', active: false }],
     ])
   })
 

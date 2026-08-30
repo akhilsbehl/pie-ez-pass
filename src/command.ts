@@ -3,8 +3,8 @@ import type { AutoReviewConfig, AutoReviewConfigFile, LoadConfigResult } from '.
 import type { ExtensionAPI, ExtensionCommandContext, ModelRegistry } from '@earendil-works/pi-coding-agent'
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, REASONING_LEVELS, autoReviewConfigSchema } from './config.js'
 
-const COMMAND_NAME = 'permission-auto-review'
-const USAGE = 'Usage: /permission-auto-review [show|path|reset [global|project]|help]'
+const COMMAND_NAME = 'ez-pass'
+const USAGE = 'Usage: /ez-pass [show|path|reset [global|project]|help]'
 const INHERIT = 'Use inherited value'
 const CUSTOM = 'Enter custom value...'
 const SAVE = 'Save changes'
@@ -400,7 +400,7 @@ function showConfig(ctx: ExtensionCommandContext, controller: AutoReviewCommandC
     return `${field}=${formatFieldValue(field, fieldValue(active, field))} (${origin})`
   })
   ctx.ui.notify(
-    `permission-auto-review:\n${fields.join('\n')}\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`,
+    `ez-pass:\n${fields.join('\n')}\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`,
     'info',
   )
 }
@@ -408,7 +408,7 @@ function showConfig(ctx: ExtensionCommandContext, controller: AutoReviewCommandC
 function showPaths(ctx: ExtensionCommandContext, controller: AutoReviewCommandController): void {
   const paths = controller.configStore.getPaths(ctx.cwd)
   ctx.ui.notify(
-    `permission-auto-review config paths:\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`,
+    `ez-pass config paths:\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`,
     'info',
   )
 }
@@ -514,7 +514,7 @@ function getArgumentCompletions(
 
 export function registerAutoReviewCommand(pi: ExtensionAPI, controller: AutoReviewCommandController): void {
   pi.registerCommand(COMMAND_NAME, {
-    description: 'Configure pie-permission-auto-review-codex without reloading the Pi session',
+    description: 'Configure pie-ez-pass without reloading the Pi session',
     getArgumentCompletions,
     handler: async (args, ctx) => {
       const normalized = args.trim().toLowerCase()

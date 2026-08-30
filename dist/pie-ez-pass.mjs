@@ -4210,11 +4210,11 @@ function superRefine(fn, params) {
 }
 //#endregion
 //#region src/config.ts
-const EXTENSION_ID = "pie-permission-auto-review-codex";
+const EXTENSION_ID = "pie-ez-pass";
 const DEFAULT_PROVIDER = "openai-codex";
 const DEFAULT_MODEL = "codex-auto-review";
 const DEFAULT_TIMEOUT_MS = 9e4;
-const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-permission-auto-review-codex/master/schemas/config.schema.json";
+const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json";
 const REASONING_LEVELS = [
 	"off",
 	"minimal",
@@ -4479,8 +4479,8 @@ function buildAutoReviewJsonSchema() {
 }
 //#endregion
 //#region src/command.ts
-const COMMAND_NAME = "permission-auto-review";
-const USAGE = "Usage: /permission-auto-review [show|path|reset [global|project]|help]";
+const COMMAND_NAME = "ez-pass";
+const USAGE = "Usage: /ez-pass [show|path|reset [global|project]|help]";
 const INHERIT = "Use inherited value";
 const CUSTOM = "Enter custom value...";
 const SAVE = "Save changes";
@@ -4748,11 +4748,11 @@ function showConfig(ctx, controller) {
 		const origin = resolveOrigin(layers, field);
 		return `${field}=${formatFieldValue(field, fieldValue(active, field))} (${origin})`;
 	});
-	ctx.ui.notify(`permission-auto-review:\n${fields.join("\n")}\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`, "info");
+	ctx.ui.notify(`ez-pass:\n${fields.join("\n")}\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`, "info");
 }
 function showPaths(ctx, controller) {
 	const paths = controller.configStore.getPaths(ctx.cwd);
-	ctx.ui.notify(`permission-auto-review config paths:\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`, "info");
+	ctx.ui.notify(`ez-pass config paths:\nglobal=${paths.globalPath}\nproject=${paths.projectPath}`, "info");
 }
 async function resetConfig(ctx, controller, requestedScope) {
 	if (ctx.mode !== "tui") {
@@ -4817,7 +4817,7 @@ function getArgumentCompletions(argumentPrefix) {
 }
 function registerAutoReviewCommand(pi, controller) {
 	pi.registerCommand(COMMAND_NAME, {
-		description: "Configure pie-permission-auto-review-codex without reloading the Pi session",
+		description: "Configure pie-ez-pass without reloading the Pi session",
 		getArgumentCompletions,
 		handler: async (args, ctx) => {
 			const normalized = args.trim().toLowerCase();
@@ -5735,7 +5735,7 @@ const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"edit",
 	"write"
 ]);
-const PERMISSION_CONFIRMATION_EVENT = "pie-permission-auto-review-codex:permission-confirmation:v1";
+const PERMISSION_CONFIRMATION_EVENT = "pie-ez-pass:permission-confirmation:v1";
 function emitPermissionConfirmation(pi, requestId, active) {
 	try {
 		pi.events.emit(PERMISSION_CONFIRMATION_EVENT, {

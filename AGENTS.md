@@ -1,6 +1,6 @@
-# pie-permission-auto-review-codex project instructions
+# pie-ez-pass project instructions
 
-This project is an Akhil-owned, personal-use Pi extension adapted from the MIT-licensed `pi-permission-auto-review` package in `mzwing/pi-packages`. Preserve that attribution when changing or redistributing the project.
+This project is an Akhil-owned, personal-use Pi extension adapted from the MIT-licensed `pi-ez-pass` package in `mzwing/pi-packages`. Preserve that attribution when changing or redistributing the project.
 
 ## Development
 
