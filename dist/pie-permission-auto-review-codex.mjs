@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -4224,6 +4224,31 @@ const REASONING_LEVELS = [
 	"xhigh",
 	"max"
 ];
+const DEFAULT_RULES = {
+	allow: {
+		commands: [],
+		paths: []
+	},
+	block: {
+		commands: [],
+		paths: []
+	}
+};
+const ruleListSchema = array(string().trim().min(1)).default([]);
+const ruleSideSchema = strictObject({
+	commands: ruleListSchema,
+	paths: ruleListSchema
+});
+const rulesSchema = strictObject({
+	allow: ruleSideSchema.default({
+		commands: [],
+		paths: []
+	}),
+	block: ruleSideSchema.default({
+		commands: [],
+		paths: []
+	})
+});
 const configFileShape = {
 	$schema: string().min(1).optional(),
 	provider: string().trim().min(1).optional(),
@@ -4232,13 +4257,18 @@ const configFileShape = {
 	timeoutMs: number().int().positive().max(3e5).optional(),
 	additionalPolicy: string().trim().min(1).optional()
 };
-const autoReviewConfigFileSchema = strictObject(configFileShape);
+const autoReviewConfigFileSchema = strictObject({
+	...configFileShape,
+	rules: rulesSchema.optional()
+});
+const projectConfigFileSchema = strictObject(configFileShape);
 const autoReviewConfigSchema = strictObject({
 	...configFileShape,
 	provider: string().trim().min(1).default(DEFAULT_PROVIDER),
 	model: string().trim().min(1).default(DEFAULT_MODEL),
 	reasoning: _enum(REASONING_LEVELS).default("low"),
-	timeoutMs: number().int().positive().max(3e5).default(DEFAULT_TIMEOUT_MS)
+	timeoutMs: number().int().positive().max(3e5).default(DEFAULT_TIMEOUT_MS),
+	rules: rulesSchema.default(() => structuredClone(DEFAULT_RULES))
 });
 function defaultAutoReviewAgentDir() {
 	return process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
@@ -4291,7 +4321,7 @@ function parseAutoReviewConfigFile(source, sourcePath) {
 	}
 	return validateAutoReviewConfigFile(value, sourcePath);
 }
-function readScope(path, readFile, issues) {
+function readScope(path, readFile, issues, project = false) {
 	let source;
 	try {
 		source = readFile(path);
@@ -4303,7 +4333,31 @@ function readScope(path, readFile, issues) {
 		return;
 	}
 	if (source === void 0) return {};
-	const parsed = parseAutoReviewConfigFile(source, path);
+	const parsed = project ? (() => {
+		let value;
+		try {
+			value = JSON.parse(source);
+		} catch (error) {
+			return {
+				ok: false,
+				issue: {
+					sourcePath: path,
+					message: `invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+				}
+			};
+		}
+		const result = projectConfigFileSchema.safeParse(value);
+		return result.success ? {
+			ok: true,
+			config: result.data
+		} : {
+			ok: false,
+			issue: {
+				sourcePath: path,
+				message: formatZodIssue(result.error)
+			}
+		};
+	})() : parseAutoReviewConfigFile(source, path);
 	if (!parsed.ok) {
 		issues.push(parsed.issue);
 		return;
@@ -4315,7 +4369,7 @@ function loadAutoReviewConfig(options) {
 	const readFile = options.readFile ?? defaultReadFile;
 	const issues = [];
 	const globalConfig = readScope(globalPath, readFile, issues);
-	const projectConfig = readScope(projectPath, readFile, issues);
+	const projectConfig = readScope(projectPath, readFile, issues, true);
 	if (globalConfig === void 0 || projectConfig === void 0) return {
 		config: void 0,
 		issues,
@@ -4339,10 +4393,77 @@ function loadAutoReviewConfig(options) {
 		};
 	}
 	return {
-		config: merged.data,
+		config: normalizeAndValidateRules(merged.data, options.cwd, globalPath, issues),
 		issues,
 		globalPath,
 		projectPath
+	};
+}
+function normalizeAndValidateRules(config, cwd, sourcePath, issues) {
+	const normalizeCommands = (values) => [...new Set(values.map((value) => value.trim()))];
+	const expandPath = (value) => {
+		if (value === "$CWD") return resolve(cwd);
+		if (value === "~") return homedir();
+		if (value.startsWith("~/")) return resolve(homedir(), value.slice(2));
+		return isAbsolute(value) ? resolve(value) : void 0;
+	};
+	const allowCommands = normalizeCommands(config.rules.allow.commands);
+	const blockCommands = normalizeCommands(config.rules.block.commands);
+	if (allowCommands.some((pattern) => blockCommands.includes(pattern))) {
+		issues.push({
+			sourcePath,
+			message: "identical normalized command patterns across allow and block are invalid"
+		});
+		return;
+	}
+	const allowPathRules = [...new Set(config.rules.allow.paths)];
+	const blockPathRules = [...new Set(config.rules.block.paths)];
+	const allowPaths = allowPathRules.map(expandPath);
+	const blockPaths = blockPathRules.map(expandPath);
+	if (allowPaths.includes(void 0) || blockPaths.includes(void 0)) {
+		issues.push({
+			sourcePath,
+			message: "path rules must be absolute, ~/..., or exact $CWD"
+		});
+		return;
+	}
+	const allows = allowPaths;
+	const blocks = blockPaths;
+	if (allows.some((allow) => blocks.some((block) => allow === block))) {
+		issues.push({
+			sourcePath,
+			message: "equal allow and block paths are invalid"
+		});
+		return;
+	}
+	const canonical = (path) => {
+		try {
+			return realpathSync(path);
+		} catch {
+			return;
+		}
+	};
+	const allowCanonical = allows.map(canonical).filter((path) => path !== void 0);
+	const blockCanonical = blocks.map(canonical).filter((path) => path !== void 0);
+	if (allowCanonical.some((allow) => blockCanonical.includes(allow))) {
+		issues.push({
+			sourcePath,
+			message: "equal allow and block canonical path aliases are invalid"
+		});
+		return;
+	}
+	return {
+		...config,
+		rules: {
+			allow: {
+				commands: allowCommands,
+				paths: allowPathRules
+			},
+			block: {
+				commands: blockCommands,
+				paths: blockPathRules
+			}
+		}
 	};
 }
 function buildAutoReviewJsonSchema() {
@@ -5446,36 +5567,89 @@ function createPermissionReviewer(runtime, reviewerDependencies = {}) {
 	};
 }
 //#endregion
-//#region src/write-policy.ts
-const FIXED_WRITE_DIRECTORIES = [
-	"/tmp",
-	"tmp",
-	".richie",
-	".pi",
-	"warchives"
-];
+//#region src/permission-rules.ts
+function compareScore(left, right) {
+	if (left === void 0) return right === void 0 ? 0 : -1;
+	if (right === void 0) return 1;
+	for (let index = 0; index < Math.max(left.length, right.length); index++) {
+		const difference = (left[index] ?? 0) - (right[index] ?? 0);
+		if (difference !== 0) return difference;
+	}
+	return 0;
+}
+function commandMatches(pattern, command) {
+	const expression = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+	return new RegExp(`^${expression}$`).test(command.trim());
+}
+function commandScore(pattern) {
+	const stars = [...pattern].filter((character) => character === "*").length;
+	return [
+		stars === 0 ? 1 : 0,
+		pattern.length - stars,
+		-stars
+	];
+}
+function bestCommand(patterns, command) {
+	return patterns.reduce((best, pattern) => {
+		if (!commandMatches(pattern, command)) return best;
+		const score = commandScore(pattern);
+		return compareScore(score, best) > 0 ? score : best;
+	}, void 0);
+}
 function expandHome(path) {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
 	return path;
 }
-function isWithinDirectory(directory, target) {
-	const remainder = relative(directory, target);
+function expandRoot(rule, cwd) {
+	if (rule === "$CWD") return resolve(cwd);
+	return resolve(expandHome(rule));
+}
+function resolveExisting(path) {
+	const missing = [];
+	let cursor = path;
+	for (;;) try {
+		return resolve(realpathSync(cursor), ...missing.reverse());
+	} catch {
+		const parent = dirname(cursor);
+		if (parent === cursor) return void 0;
+		missing.push(cursor.slice(parent.length + (parent.endsWith("/") ? 0 : 1)));
+		cursor = parent;
+	}
+}
+function aliases(path) {
+	const canonical = resolveExisting(path);
+	return canonical === void 0 || canonical === path ? [path] : [path, canonical];
+}
+function within(root, target) {
+	const remainder = relative(root, target);
 	return remainder === "" || !remainder.startsWith("..") && !isAbsolute(remainder);
 }
-/**
-* Returns whether an explicit edit/write target is in a directory that Pi can
-* allow without invoking the model reviewer.
-*
-* Paths are matched lexically after resolving `..` segments. Shell commands
-* are intentionally not handled here because their write target cannot be
-* determined safely from the command string.
-*/
-function isDeterministicallyAllowedWritePath(requestedPath, cwd) {
-	if (requestedPath.length === 0 || cwd.length === 0) return false;
-	const sessionCwd = resolve(cwd);
-	const target = resolve(sessionCwd, expandHome(requestedPath));
-	return [sessionCwd, ...FIXED_WRITE_DIRECTORIES.map((directory) => directory === "/tmp" ? directory : resolve(homedir(), directory))].some((directory) => isWithinDirectory(directory, target));
+function bestPath(patterns, value, cwd) {
+	const targets = aliases(resolve(cwd, expandHome(value)));
+	return patterns.reduce((best, pattern) => {
+		const root = expandRoot(pattern, cwd);
+		if (!aliases(root).some((rootAlias) => targets.some((target) => within(rootAlias, target)))) return best;
+		const score = [(resolveExisting(root) ?? root).split("/").filter(Boolean).length];
+		return compareScore(score, best) > 0 ? score : best;
+	}, void 0);
+}
+function decide(allow, block) {
+	const comparison = compareScore(allow, block);
+	if (allow !== void 0 && block !== void 0 && comparison === 0) return "conflict";
+	if (comparison > 0) return "allow";
+	if (comparison < 0) return "block";
+	return "none";
+}
+function decidePermanentRule(toolName, value, config, cwd) {
+	if (value === void 0) return "none";
+	const rules = config.rules ?? DEFAULT_RULES;
+	if (toolName === "bash") {
+		if (/[;&|\n\r`]/.test(value) || value.includes("$(") || value.includes("<(") || value.includes(">(")) return "none";
+		return decide(bestCommand(rules.allow.commands, value), bestCommand(rules.block.commands, value));
+	}
+	if (toolName === "edit" || toolName === "write") return decide(bestPath(rules.allow.paths, value, cwd), bestPath(rules.block.paths, value, cwd));
+	return "none";
 }
 //#endregion
 //#region src/permission-log.ts
@@ -5668,16 +5842,29 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			inputKeys: Object.keys(asRecord(event.input)),
 			value: details.value
 		});
-		if ((event.toolName === "edit" || event.toolName === "write") && details.path !== void 0 && sessionRuntime !== void 0 && isDeterministicallyAllowedWritePath(details.path, sessionRuntime.cwd)) {
+		const current = generation;
+		const ruleDecision = current?.config !== void 0 && sessionRuntime !== void 0 ? decidePermanentRule(event.toolName, event.toolName === "bash" ? details.command : details.path, current.config, sessionRuntime.cwd) : "none";
+		if (ruleDecision === "allow") {
 			reviewLog.review("permission.decision", {
 				requestId: details.requestId,
 				toolName: details.toolName,
-				policy: "deterministic-path",
+				policy: "permanent-rule",
 				outcome: "ACCEPT"
 			});
 			return {};
 		}
-		const current = generation;
+		if (ruleDecision === "block") {
+			reviewLog.review("permission.decision", {
+				requestId: details.requestId,
+				toolName: details.toolName,
+				policy: "permanent-rule",
+				outcome: "BLOCK"
+			});
+			return {
+				block: true,
+				reason: "Blocked by a permanent permission rule."
+			};
+		}
 		let verdict = { kind: "escalate" };
 		let failureReason;
 		if (current === void 0 || current.config === void 0) {
@@ -5688,7 +5875,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 				outcome: "ESCALATE",
 				reasonCode: "config-invalid"
 			});
-		} else try {
+		} else if (ruleDecision !== "conflict") try {
 			verdict = await current.authorize(details, reviewLog);
 		} catch (error) {
 			failureReason = "Automatic permission review failed; human approval is required.";
@@ -5699,6 +5886,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 				errorCategory: "authorizer-error"
 			});
 		}
+		else failureReason = "This call has equally specific allow and block rules; explicit human confirmation is required.";
 		if (verdict.kind === "accept") return {};
 		reviewLog.review("permission.escalated", {
 			requestId: details.requestId,
@@ -5710,7 +5898,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			reason: failureReason ?? "Human confirmation is required, but no interactive UI is available."
 		};
 		try {
-			const approved = await context.ui.confirm("Permission escalation", details.message);
+			const approved = await context.ui.confirm(failureReason === void 0 ? "Permission escalation" : "⚠ Permission review unavailable", failureReason === void 0 ? details.message : `⚠ ${failureReason}\n\n${details.message}`);
 			reviewLog.review("permission.human_decision", {
 				requestId: details.requestId,
 				toolName: details.toolName,
