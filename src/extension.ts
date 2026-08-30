@@ -42,11 +42,19 @@ interface SessionRuntime {
 }
 
 const REVIEWED_TOOLS = new Set(['bash', 'edit', 'write'])
+export const PERMISSION_CONFIRMATION_EVENT = 'pie-permission-auto-review-codex:permission-confirmation:v1'
 
 function ignoreDiagnostic(_message: string): void {
   // The extension is silent during normal operation. Escalation is the user-visible boundary.
 }
 
+function emitPermissionConfirmation(pi: Pick<ExtensionAPI, 'events'>, requestId: string, active: boolean): void {
+  try {
+    pi.events.emit(PERMISSION_CONFIRMATION_EVENT, { requestId, active })
+  } catch {
+    // Event observers must not affect permission decisions or lifecycle cleanup.
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -230,6 +238,7 @@ function installAutoReviewExtension(
       return { block: true, reason: failureReason ?? 'Human confirmation is required, but no interactive UI is available.' }
     }
     try {
+      emitPermissionConfirmation(pi, details.requestId, true)
       const approved = await context.ui.confirm(
         failureReason === undefined ? 'Permission escalation' : '⚠ Permission review unavailable',
         failureReason === undefined ? details.message : `⚠ ${failureReason}\n\n${details.message}`,
@@ -241,6 +250,8 @@ function installAutoReviewExtension(
     } catch (error) {
       reviewLog.review('permission.error', { requestId: details.requestId, toolName: details.toolName, errorCategory: 'confirmation-error' })
       return { block: true, reason: 'Human confirmation failed; permission was not granted.' }
+    } finally {
+      emitPermissionConfirmation(pi, details.requestId, false)
     }
   }
 
