@@ -13,7 +13,11 @@ const TEST_RULES = {
 
 function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?: boolean; hasUI?: boolean; approved?: boolean; rules?: typeof DEFAULT_RULES; cwd?: string } = {}) {
   const handlers = new Map<string, (...args: any[]) => any>()
-  const pi = { on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)), registerCommand: vi.fn() }
+  const pi = {
+    on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)),
+    registerCommand: vi.fn(),
+    events: { emit: vi.fn(), on: vi.fn() },
+  }
   const reviewer = vi.fn(async () => { if (options.throws) throw new Error('provider failed'); return { kind } })
   const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
   createAutoReviewExtension(pi as never, {
@@ -22,7 +26,7 @@ function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?:
   })
   const context = { cwd: options.cwd ?? '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: options.hasUI ?? true, ui: { confirm: vi.fn(async () => options.approved ?? true) } }
   handlers.get('session_start')?.({}, context)
-  return { handlers, reviewer, reviewLog, context }
+  return { handlers, reviewer, reviewLog, context, pi }
 }
 const call = { type: 'tool_call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'touch /important' } }
 
@@ -146,6 +150,85 @@ describe('tool_call permission boundary', () => {
     const result = await run.handlers.get('tool_call')?.({ ...call, toolName: 'write', input: { path: join(narrow, 'file') } }, run.context)
     expect(result).toEqual(narrowSide === 'allow' ? {} : { block: true, reason: 'Blocked by a permanent permission rule.' })
     expect(run.reviewer).not.toHaveBeenCalled()
+  })
+
+  it('brackets approved confirmation with exact request-scoped lifecycle events', async () => {
+    const { handlers, context, pi } = setup('escalate', { approved: true })
+    context.ui.confirm.mockImplementation(async () => {
+      expect(pi.events.emit).toHaveBeenLastCalledWith(
+        'pie-permission-auto-review-codex:permission-confirmation:v1',
+        { requestId: 'call-1', active: true },
+      )
+      return true
+    })
+
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
+    expect(pi.events.emit.mock.calls).toEqual([
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: true }],
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: false }],
+    ])
+  })
+
+  it('clears the request-scoped lifecycle event after denial', async () => {
+    const { handlers, context, pi } = setup('escalate', { approved: false })
+
+    expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
+    expect(pi.events.emit).toHaveBeenLastCalledWith(
+      'pie-permission-auto-review-codex:permission-confirmation:v1',
+      { requestId: 'call-1', active: false },
+    )
+  })
+
+  it('clears the request-scoped lifecycle event after confirmation throws or is cancelled', async () => {
+    const { handlers, context, pi } = setup('escalate')
+    context.ui.confirm.mockRejectedValue(new Error('cancelled'))
+
+    expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
+    expect(pi.events.emit.mock.calls).toEqual([
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: true }],
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'call-1', active: false }],
+    ])
+  })
+
+  it('scopes lifecycle events independently to each tool-call request', async () => {
+    const { handlers, context, pi } = setup('escalate')
+
+    await handlers.get('tool_call')?.({ ...call, toolCallId: 'request-a' }, context)
+    await handlers.get('tool_call')?.({ ...call, toolCallId: 'request-b' }, context)
+
+    expect(pi.events.emit.mock.calls).toEqual([
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-a', active: true }],
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-a', active: false }],
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-b', active: true }],
+      ['pie-permission-auto-review-codex:permission-confirmation:v1', { requestId: 'request-b', active: false }],
+    ])
+  })
+
+  it('ignores observer emit failures without changing approval or preventing cleanup', async () => {
+    const { handlers, context, pi } = setup('escalate', { approved: true })
+    pi.events.emit
+      .mockImplementationOnce(() => { throw new Error('start observer failed') })
+      .mockImplementationOnce(() => { throw new Error('cleanup observer failed') })
+
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
+    expect(context.ui.confirm).toHaveBeenCalledOnce()
+    expect(pi.events.emit).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not emit lifecycle events on paths that never open confirmation', async () => {
+    const modelAccept = setup('accept')
+    await modelAccept.handlers.get('tool_call')?.(call, modelAccept.context)
+    const permanentAccept = setup('escalate')
+    await permanentAccept.handlers.get('tool_call')?.({ ...call, input: { command: 'git status' } }, permanentAccept.context)
+    const permanentBlock = setup('accept')
+    await permanentBlock.handlers.get('tool_call')?.({ ...call, input: { command: 'sudo echo no' } }, permanentBlock.context)
+    const noUi = setup('escalate', { hasUI: false })
+    await noUi.handlers.get('tool_call')?.(call, noUi.context)
+
+    for (const run of [modelAccept, permanentAccept, permanentBlock, noUi]) {
+      expect(run.context.ui.confirm).not.toHaveBeenCalled()
+      expect(run.pi.events.emit).not.toHaveBeenCalled()
+    }
   })
 
   it('ACCEPT executes without confirmation', async () => {

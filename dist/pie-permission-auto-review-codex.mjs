@@ -5735,6 +5735,15 @@ const REVIEWED_TOOLS = /* @__PURE__ */ new Set([
 	"edit",
 	"write"
 ]);
+const PERMISSION_CONFIRMATION_EVENT = "pie-permission-auto-review-codex:permission-confirmation:v1";
+function emitPermissionConfirmation(pi, requestId, active) {
+	try {
+		pi.events.emit(PERMISSION_CONFIRMATION_EVENT, {
+			requestId,
+			active
+		});
+	} catch {}
+}
 function asRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
@@ -5898,6 +5907,7 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 			reason: failureReason ?? "Human confirmation is required, but no interactive UI is available."
 		};
 		try {
+			emitPermissionConfirmation(pi, details.requestId, true);
 			const approved = await context.ui.confirm(failureReason === void 0 ? "Permission escalation" : "⚠ Permission review unavailable", failureReason === void 0 ? details.message : `⚠ ${failureReason}\n\n${details.message}`);
 			reviewLog.review("permission.human_decision", {
 				requestId: details.requestId,
@@ -5918,6 +5928,8 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 				block: true,
 				reason: "Human confirmation failed; permission was not granted."
 			};
+		} finally {
+			emitPermissionConfirmation(pi, details.requestId, false);
 		}
 	}
 	function applyConfig(result) {
