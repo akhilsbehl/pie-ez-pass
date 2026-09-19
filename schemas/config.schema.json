@@ -40,57 +40,86 @@
       "type": "string",
       "minLength": 1
     },
+    "use_jev": {
+      "type": "boolean"
+    },
+    "jev_accept_confidence_threshold": {
+      "default": 0.95,
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
     "rules": {
+      "default": {
+        "allow": {
+          "commands": [],
+          "paths": []
+        },
+        "block": {
+          "commands": [],
+          "paths": []
+        }
+      },
       "type": "object",
       "properties": {
         "allow": {
+          "default": {
+            "commands": [],
+            "paths": []
+          },
           "type": "object",
           "properties": {
             "commands": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string",
                 "minLength": 1
-              },
-              "default": []
+              }
             },
             "paths": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string",
                 "minLength": 1
-              },
-              "default": []
+              }
             }
           },
           "additionalProperties": false
         },
         "block": {
+          "default": {
+            "commands": [],
+            "paths": []
+          },
           "type": "object",
           "properties": {
             "commands": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string",
                 "minLength": 1
-              },
-              "default": []
+              }
             },
             "paths": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string",
                 "minLength": 1
-              },
-              "default": []
+              }
             }
           },
           "additionalProperties": false
         }
       },
-      "additionalProperties": false,
-      "description": "Permanent rules. Only global config may define this field."
+      "additionalProperties": false
     }
   },
+  "required": [
+    "use_jev"
+  ],
   "additionalProperties": false
 }

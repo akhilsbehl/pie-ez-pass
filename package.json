@@ -46,6 +46,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "pie-jev": "file:../pie-jev",
     "zod": "4.4.3"
   },
   "devDependencies": {

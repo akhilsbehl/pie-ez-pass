@@ -11,6 +11,7 @@ import type { AutoReviewActivationResult } from './command.js'
 import type { AutoReviewConfig, LoadConfigResult } from './config.js'
 import { registerAutoReviewCommand } from './command.js'
 import { AutoReviewConfigStore } from './config-store.js'
+import { createJevReviewer } from './jev-reviewer.js'
 import { createPermissionReviewer } from './reviewer.js'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 import { decidePermanentRule } from './permission-rules.js'
@@ -118,9 +119,15 @@ function installAutoReviewExtension(
   const createReviewer =
     dependencies.createReviewer ??
     ((options: ReviewerFactoryOptions) =>
-      createPermissionReviewer({
-        ...options,
-      }))
+      options.config.use_jev
+        ? createJevReviewer({
+            config: options.config,
+            sessionManager: options.sessionManager,
+            sessionSignal: options.sessionSignal,
+          })
+        : createPermissionReviewer({
+            ...options,
+          }))
   const configuredReviewLog = dependencies.reviewLog ?? createPermissionLog()
   let sessionId = randomUUID()
   const reviewLog: ReviewLog = {
@@ -218,6 +225,10 @@ function installAutoReviewExtension(
       reviewLog.review('permission.escalated', {
         requestId: details.requestId, toolName: details.toolName, outcome: 'ESCALATE', reasonCode: 'config-invalid',
       })
+    } else if (event.toolName === 'edit' || event.toolName === 'write') {
+      if (ruleDecision === 'conflict') {
+        failureReason = 'This call has equally specific allow and block rules; explicit human confirmation is required.'
+      }
     } else if (ruleDecision !== 'conflict') {
       try {
         verdict = await current.authorize(details, reviewLog)

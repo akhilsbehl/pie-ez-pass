@@ -5,6 +5,7 @@ declare const EXTENSION_ID = "pie-ez-pass";
 declare const DEFAULT_PROVIDER = "openai-codex";
 declare const DEFAULT_MODEL = "codex-auto-review";
 declare const DEFAULT_TIMEOUT_MS = 90000;
+declare const DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD = 0.95;
 declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json";
 declare const autoReviewConfigSchema: z.ZodObject<{
   $schema: z.ZodOptional<z.ZodString>;
@@ -21,6 +22,8 @@ declare const autoReviewConfigSchema: z.ZodObject<{
     xhigh: "xhigh";
   }>>;
   timeoutMs: z.ZodDefault<z.ZodNumber>;
+  use_jev: z.ZodBoolean;
+  jev_accept_confidence_threshold: z.ZodDefault<z.ZodNumber>;
   rules: z.ZodDefault<z.ZodObject<{
     allow: z.ZodDefault<z.ZodObject<{
       commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
@@ -102,4 +105,4 @@ declare function createAutoReviewExtension(pi: ExtensionAPI, dependencies?: Auto
 //#region src/index.d.ts
 declare function permissionAutoReviewExtension(pi: ExtensionAPI): void;
 //#endregion
-export { type AutoReviewConfig, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };
+export { type AutoReviewConfig, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };

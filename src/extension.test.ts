@@ -21,8 +21,25 @@ function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?:
   const reviewer = vi.fn(async () => { if (options.throws) throw new Error('provider failed'); return { kind } })
   const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
   createAutoReviewExtension(pi as never, {
-    loadConfig: () => ({ config: options.valid === false ? undefined : { provider: 'test', model: 'review', reasoning: 'off', timeoutMs: 1000, rules: options.rules ?? TEST_RULES }, issues: [], globalPath: '', projectPath: '' }),
-    createReviewer: () => reviewer, reviewLog,
+    loadConfig: () => ({
+      config:
+        options.valid === false
+          ? undefined
+          : {
+              provider: 'test',
+              model: 'review',
+              reasoning: 'off',
+              timeoutMs: 1000,
+              use_jev: false,
+              jev_accept_confidence_threshold: 0.95,
+              rules: options.rules ?? TEST_RULES,
+            },
+      issues: [],
+      globalPath: '',
+      projectPath: '',
+    }),
+    createReviewer: () => reviewer,
+    reviewLog,
   })
   const context = { cwd: options.cwd ?? '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: options.hasUI ?? true, ui: { confirm: vi.fn(async () => options.approved ?? true) } }
   handlers.get('session_start')?.({}, context)
@@ -249,4 +266,22 @@ describe('tool_call permission boundary', () => {
   })
   it('keeps bash reviewed', async () => { const { handlers, context, reviewer } = setup('accept'); await handlers.get('tool_call')?.(call, context); expect(reviewer).toHaveBeenCalledOnce() })
   it('passes unreviewed tools through', async () => { const { handlers, context, reviewer } = setup('escalate'); expect(await handlers.get('tool_call')?.({ ...call, toolName: 'read' }, context)).toEqual({}); expect(reviewer).not.toHaveBeenCalled() })
+  it.each(['edit', 'write'] as const)('escalates unmatched %s paths to a human without LLM review', async toolName => {
+    const rules = { allow: { commands: [], paths: [] }, block: { commands: [], paths: [] } } as typeof DEFAULT_RULES
+    const { handlers, context, reviewer } = setup('escalate', { rules, approved: true })
+    expect(
+      await handlers.get('tool_call')?.({ ...call, toolName, input: { path: '/unmatched/a', content: 'x' } }, context),
+    ).toEqual({})
+    expect(reviewer).not.toHaveBeenCalled()
+    expect(context.ui.confirm).toHaveBeenCalledOnce()
+  })
+  it.each(['edit', 'write'] as const)('blocks unmatched %s paths without UI and without LLM review', async toolName => {
+    const rules = { allow: { commands: [], paths: [] }, block: { commands: [], paths: [] } } as typeof DEFAULT_RULES
+    const { handlers, context, reviewer } = setup('escalate', { rules, hasUI: false })
+    expect(
+      await handlers.get('tool_call')?.({ ...call, toolName, input: { path: '/unmatched/a', content: 'x' } }, context),
+    ).toMatchObject({ block: true })
+    expect(reviewer).not.toHaveBeenCalled()
+    expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
 })

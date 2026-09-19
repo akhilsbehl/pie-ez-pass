@@ -3,6 +3,7 @@ import { createAutoReviewExtension } from './extension.js'
 
 export {
   CONFIG_SCHEMA_URL,
+  DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER,
   DEFAULT_TIMEOUT_MS,

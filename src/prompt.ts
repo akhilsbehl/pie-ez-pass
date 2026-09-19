@@ -1,7 +1,7 @@
 import type { AutoReviewConfig } from './config.js'
 import type { RenderedTranscript } from './transcript.js'
 import type { ReviewPermissionDetails } from './review-types.js'
-import { buildSystemPrompt } from './policy.js'
+import { SHARED_POLICY_CORE, buildSystemPrompt } from './policy.js'
 import { truncateToApproximateTokens } from './transcript.js'
 
 const MAX_ACTION_TOKENS = 10_000
@@ -72,4 +72,38 @@ ${renderedTranscript}${omission}
 ${action}
 >>> PERMISSION REQUEST END`,
   }
+}
+
+export function buildJevState(
+  config: AutoReviewConfig,
+  transcript: RenderedTranscript,
+  details: ReviewPermissionDetails,
+): string {
+  const renderedTranscript =
+    transcript.entries.length > 0
+      ? transcript.entries.join('\n')
+      : JSON.stringify({ source: 'metadata', retainedEntries: 0 })
+  const omission =
+    transcript.omittedCount > 0
+      ? `\n${JSON.stringify({ source: 'metadata', omittedEntries: transcript.omittedCount })}`
+      : ''
+  const action = truncateToApproximateTokens(
+    JSON.stringify(normalizePermissionDetails(details), null, 2),
+    MAX_ACTION_TOKENS,
+  )
+  const operatorPolicy =
+    config.additionalPolicy === undefined
+      ? 'Additional operator policy:\n(none)'
+      : `Additional operator policy:\n${config.additionalPolicy}`
+
+  return `Trusted permission policy:
+${SHARED_POLICY_CORE}
+
+${operatorPolicy}
+
+Untrusted transcript JSONL evidence:
+${renderedTranscript}${omission}
+
+Exact bash permission request:
+${action}`
 }

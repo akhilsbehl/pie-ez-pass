@@ -1,22 +1,29 @@
 import type { AutoReviewConfigStore, AutoReviewConfigScope, AutoReviewScopeSnapshot } from './config-store.js'
 import type { AutoReviewConfig, AutoReviewConfigFile, LoadConfigResult } from './config.js'
 import type { ExtensionAPI, ExtensionCommandContext, ModelRegistry } from '@earendil-works/pi-coding-agent'
-import { DEFAULT_MODEL, DEFAULT_PROVIDER, REASONING_LEVELS, autoReviewConfigSchema } from './config.js'
+import { DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD, DEFAULT_MODEL, DEFAULT_PROVIDER, REASONING_LEVELS, autoReviewConfigSchema } from './config.js'
 
 const COMMAND_NAME = 'ez-pass'
-const USAGE = 'Usage: /ez-pass [show|path|reset [global|project]|help]'
+const USAGE = 'Usage: /ez-pass [show|path|help]'
 const INHERIT = 'Use inherited value'
 const CUSTOM = 'Enter custom value...'
 const SAVE = 'Save changes'
 const CANCEL = 'Cancel'
-const WHITESPACE = /\s+/
-const DEFAULT_CONFIG = autoReviewConfigSchema.parse({})
+const DEFAULT_CONFIG = {
+  provider: DEFAULT_PROVIDER,
+  model: DEFAULT_MODEL,
+  reasoning: 'low' as const,
+  timeoutMs: 90_000,
+  jev_accept_confidence_threshold: DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD,
+}
 
 const configFields = [
   'provider',
   'model',
   'reasoning',
   'timeoutMs',
+  'use_jev',
+  'jev_accept_confidence_threshold',
   'additionalPolicy',
 ] as const
 
@@ -27,6 +34,8 @@ const fieldLabels: Record<ConfigField, string> = {
   model: 'Model',
   reasoning: 'Reasoning',
   timeoutMs: 'Timeout',
+  use_jev: 'Use JEV',
+  jev_accept_confidence_threshold: 'JEV accept confidence threshold',
   additionalPolicy: 'Additional policy',
 }
 
@@ -44,7 +53,7 @@ interface ConfigLayers {
 }
 
 interface ConfigView {
-  config: AutoReviewConfig
+  config: AutoReviewConfigFile
   layers: ConfigLayers
 }
 
@@ -61,19 +70,24 @@ function resolveView(layers: ConfigLayers): ConfigView {
     ...layers.global,
     ...layers.project,
   })
-  const additionalPolicy =
-    layers.project.additionalPolicy ?? layers.global.additionalPolicy ?? DEFAULT_CONFIG.additionalPolicy
-  const fallback: AutoReviewConfig = {
+  if (merged.success) {
+    return { config: merged.data, layers }
+  }
+  const useJev = layers.project.use_jev ?? layers.global.use_jev
+  const additionalPolicy = layers.project.additionalPolicy ?? layers.global.additionalPolicy
+  const fallback: AutoReviewConfigFile = {
     provider: layers.project.provider ?? layers.global.provider ?? DEFAULT_CONFIG.provider,
     model: layers.project.model ?? layers.global.model ?? DEFAULT_CONFIG.model,
     reasoning: layers.project.reasoning ?? layers.global.reasoning ?? DEFAULT_CONFIG.reasoning,
     timeoutMs: layers.project.timeoutMs ?? layers.global.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
+    jev_accept_confidence_threshold:
+      layers.project.jev_accept_confidence_threshold ??
+      layers.global.jev_accept_confidence_threshold ??
+      DEFAULT_CONFIG.jev_accept_confidence_threshold,
+    ...(useJev === undefined ? {} : { use_jev: useJev }),
     ...(additionalPolicy === undefined ? {} : { additionalPolicy }),
   }
-  return {
-    config: merged.success ? merged.data : fallback,
-    layers,
-  }
+  return { config: fallback, layers }
 }
 
 function resolveOrigin(layers: ConfigLayers, field: ConfigField): AutoReviewConfigScope | 'default' {
@@ -92,6 +106,12 @@ function formatFieldValue(field: ConfigField, value: unknown): string {
   }
   if (field === 'timeoutMs' && typeof value === 'number') {
     return `${value} ms`
+  }
+  if (field === 'use_jev') {
+    return typeof value === 'boolean' ? String(value) : 'not set'
+  }
+  if (field === 'jev_accept_confidence_threshold' && typeof value === 'number') {
+    return String(value)
   }
   return String(value ?? 'not set')
 }
@@ -125,6 +145,12 @@ function removeField(config: AutoReviewConfigFile, field: ConfigField): AutoRevi
     case 'timeoutMs':
       delete next.timeoutMs
       break
+    case 'use_jev':
+      delete next.use_jev
+      break
+    case 'jev_accept_confidence_threshold':
+      delete next.jev_accept_confidence_threshold
+      break
     case 'additionalPolicy':
       delete next.additionalPolicy
       break
@@ -149,6 +175,10 @@ function setField(
       }
     case 'timeoutMs':
       return { ...config, timeoutMs: Number(value) }
+    case 'use_jev':
+      return { ...config, use_jev: value === true || value === 'true' }
+    case 'jev_accept_confidence_threshold':
+      return { ...config, jev_accept_confidence_threshold: Number(value) }
     case 'additionalPolicy':
       return { ...config, additionalPolicy: String(value) }
   }
@@ -248,6 +278,47 @@ async function editTimeout(
   return setField(draft, 'timeoutMs', value)
 }
 
+async function editUseJev(
+  ctx: ExtensionCommandContext,
+  draft: AutoReviewConfigFile,
+): Promise<AutoReviewConfigFile> {
+  const selected = await ctx.ui.select('Configure Use JEV', [INHERIT, 'true', 'false'])
+  if (selected === INHERIT) {
+    return removeField(draft, 'use_jev')
+  }
+  if (selected === 'true') {
+    return setField(draft, 'use_jev', true)
+  }
+  if (selected === 'false') {
+    return setField(draft, 'use_jev', false)
+  }
+  return draft
+}
+
+async function editJevThreshold(
+  ctx: ExtensionCommandContext,
+  draft: AutoReviewConfigFile,
+  currentValue: number,
+): Promise<AutoReviewConfigFile> {
+  const action = await ctx.ui.select('Configure JEV accept confidence threshold', [INHERIT, 'Enter threshold...'])
+  if (action === INHERIT) {
+    return removeField(draft, 'jev_accept_confidence_threshold')
+  }
+  if (action !== 'Enter threshold...') {
+    return draft
+  }
+  const source = await ctx.ui.input('JEV accept confidence threshold (0 through 1)', String(currentValue))
+  if (source === undefined) {
+    return draft
+  }
+  const value = Number(source.trim())
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    ctx.ui.notify('jev_accept_confidence_threshold must be a number from 0 through 1.', 'warning')
+    return draft
+  }
+  return setField(draft, 'jev_accept_confidence_threshold', value)
+}
+
 async function editAdditionalPolicy(
   ctx: ExtensionCommandContext,
   draft: AutoReviewConfigFile,
@@ -306,14 +377,14 @@ async function openSettingsMenu(ctx: ExtensionCommandContext, controller: AutoRe
   const other = controller.configStore.readScope(ctx.cwd, scope === 'global' ? 'project' : 'global')
   if (!selected.valid) {
     ctx.ui.notify(
-      `Cannot edit config at '${selected.path}': ${selected.issue.message}. Use reset to remove it or fix it manually.`,
+      `Cannot edit config at '${selected.path}': ${selected.issue.message}. Fix it manually.`,
       'error',
     )
     return
   }
   if (!other.valid) {
     ctx.ui.notify(
-      `Cannot edit config at '${other.path}': ${other.issue.message}. Use reset to remove it or fix it manually.`,
+      `Cannot edit config at '${other.path}': ${other.issue.message}. Fix it manually.`,
       'error',
     )
     return
@@ -366,7 +437,17 @@ async function openSettingsMenu(ctx: ExtensionCommandContext, controller: AutoRe
         draft = await editReasoning(ctx, draft)
         break
       case 'timeoutMs':
-        draft = await editTimeout(ctx, draft, view.config.timeoutMs)
+        draft = await editTimeout(ctx, draft, Number(view.config.timeoutMs ?? DEFAULT_CONFIG.timeoutMs))
+        break
+      case 'use_jev':
+        draft = await editUseJev(ctx, draft)
+        break
+      case 'jev_accept_confidence_threshold':
+        draft = await editJevThreshold(
+          ctx,
+          draft,
+          Number(view.config.jev_accept_confidence_threshold ?? DEFAULT_CONFIG.jev_accept_confidence_threshold),
+        )
         break
       case 'additionalPolicy':
         draft = await editAdditionalPolicy(ctx, draft, view.config.additionalPolicy)
@@ -413,101 +494,27 @@ function showPaths(ctx: ExtensionCommandContext, controller: AutoReviewCommandCo
   )
 }
 
-async function resetConfig(
-  ctx: ExtensionCommandContext,
-  controller: AutoReviewCommandController,
-  requestedScope: string | undefined,
-): Promise<void> {
-  if (ctx.mode !== 'tui') {
-    ctx.ui.notify(`/${COMMAND_NAME} reset requires interactive TUI mode.`, 'warning')
-    return
-  }
-  await ctx.waitForIdle()
-
-  let scope: AutoReviewConfigScope | undefined
-  if (requestedScope === 'global' || requestedScope === 'project') {
-    scope = requestedScope
-  } else if (requestedScope === undefined) {
-    scope = await chooseScope(ctx, 'Select configuration scope to reset')
-  } else {
-    ctx.ui.notify(USAGE, 'warning')
-    return
-  }
-  if (scope === undefined) {
-    return
-  }
-
-  const snapshot = controller.configStore.readScope(ctx.cwd, scope)
-  const confirmed = await ctx.ui.confirm(
-    `Reset ${scope} auto-review config?`,
-    `Delete '${snapshot.path}' and immediately apply inherited values?`,
-  )
-  if (!confirmed) {
-    return
-  }
-
-  const reset = controller.configStore.reset(snapshot)
-  if (!reset.ok) {
-    ctx.ui.notify(reset.message, 'error')
-    return
-  }
-  const activation = controller.applyConfig(reset.loadResult)
-  if (activation.kind === 'failed') {
-    ctx.ui.notify(`Config reset, but the current reviewer could not be replaced: ${activation.message}`, 'error')
-  } else if (activation.kind === 'pending') {
-    ctx.ui.notify(
-      `${scope} config reset. The inherited config will activate when the Pi session starts.`,
-      'warning',
-    )
-  } else if (reset.loadResult.config === undefined) {
-    ctx.ui.notify(
-      `${scope} config reset, but automatic review remains disabled because another config layer is invalid.`,
-      'warning',
-    )
-  } else {
-    ctx.ui.notify(`${scope} config reset and inherited values applied without reloading the Pi session.`, 'info')
-  }
-}
-
 function getArgumentCompletions(
   argumentPrefix: string,
 ): Array<{ value: string; label: string; description: string }> | null {
   const normalized = argumentPrefix.trimStart().toLowerCase()
-  const items = normalized.startsWith('reset ')
-    ? [
-        {
-          value: 'reset global',
-          label: 'Reset global config',
-          description: 'Delete the global auto-review config',
-        },
-        {
-          value: 'reset project',
-          label: 'Reset project config',
-          description: 'Delete the project auto-review config',
-        },
-      ]
-    : [
-        {
-          value: 'show',
-          label: 'Show active config',
-          description: 'Display effective values and their origins',
-        },
-        {
-          value: 'path',
-          label: 'Show config paths',
-          description: 'Display global and project config paths',
-        },
-        {
-          value: 'reset',
-          label: 'Reset config',
-          description: 'Delete one config layer and apply inherited values',
-        },
-        {
-          value: 'help',
-          label: 'Show help',
-          description: 'Display command usage',
-        },
-      ]
+  const items = [
+    {
+      value: 'show',
+      label: 'Show active config',
+      description: 'Display effective values and their origins',
+    },
+    {
+      value: 'path',
+      label: 'Show config paths',
+      description: 'Display global and project config paths',
+    },
+    {
+      value: 'help',
+      label: 'Show help',
+      description: 'Display command usage',
+    },
+  ]
   const filtered = items.filter(item => item.value.startsWith(normalized))
   return filtered.length > 0 ? filtered : null
 }
@@ -532,11 +539,6 @@ export function registerAutoReviewCommand(pi: ExtensionAPI, controller: AutoRevi
       }
       if (normalized === 'help') {
         ctx.ui.notify(USAGE, 'info')
-        return
-      }
-      if (normalized === 'reset' || normalized.startsWith('reset ')) {
-        const scope = normalized.split(WHITESPACE)[1]
-        await resetConfig(ctx, controller, scope)
         return
       }
       ctx.ui.notify(USAGE, 'warning')
