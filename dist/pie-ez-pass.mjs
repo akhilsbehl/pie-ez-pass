@@ -8003,18 +8003,35 @@ const JEV_QUESTION_CRITERIA = {
 function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+function acceptConfidence(answer) {
+	if (answer === void 0 || answer["type"] !== "choice") return;
+	if (answer["choice"] === "ACCEPT") {
+		const confidence = answer["confidence"];
+		return typeof confidence === "number" && Number.isFinite(confidence) ? confidence : void 0;
+	}
+	if (answer["choice"] === "ESCALATE") {
+		const probabilities = answer["probabilities"];
+		if (isRecord(probabilities)) {
+			const acceptProbability = probabilities["ACCEPT"];
+			if (typeof acceptProbability === "number" && Number.isFinite(acceptProbability)) return acceptProbability;
+		}
+		const confidence = answer["confidence"];
+		if (typeof confidence === "number" && Number.isFinite(confidence)) return Number((1 - confidence).toFixed(4));
+	}
+}
 function mapJevPermissionDecision(answers, threshold) {
-	const answer = answers[JEV_PERMISSION_QUESTION_NAME];
-	const confidence = answer !== void 0 && isRecord(answer) ? answer["confidence"] : void 0;
-	const choice = answer !== void 0 && isRecord(answer) ? answer["choice"] : void 0;
-	const confidenceText = typeof confidence === "number" && Number.isFinite(confidence) ? String(confidence) : "missing";
-	if (answer !== void 0 && answer.type === "choice" && choice === "ACCEPT" && typeof confidence === "number" && Number.isFinite(confidence) && confidence >= threshold) return {
+	const raw = answers[JEV_PERMISSION_QUESTION_NAME];
+	const answer = raw !== void 0 && isRecord(raw) ? raw : void 0;
+	const choice = answer?.["choice"];
+	const confidence = acceptConfidence(answer);
+	const confidenceText = confidence === void 0 ? "missing" : String(confidence);
+	if (answer !== void 0 && choice === "ACCEPT" && confidence !== void 0 && confidence >= threshold) return {
 		outcome: "ACCEPT",
-		rationale: `JEV permission_decision=ACCEPT; confidence=${confidence}; threshold=${threshold}.`
+		rationale: `JEV permission_decision=ACCEPT; accept_confidence=${confidence}; accept_confidence_threshold=${threshold}.`
 	};
 	return {
 		outcome: "ESCALATE",
-		rationale: `JEV permission_decision=${answer !== void 0 && answer.type === "choice" && (choice === "ACCEPT" || choice === "ESCALATE") ? String(choice) : "INVALID"}; confidence=${confidenceText}; threshold=${threshold}.`
+		rationale: `JEV permission_decision=${choice === "ACCEPT" || choice === "ESCALATE" ? String(choice) : "INVALID"}; accept_confidence=${confidenceText}; accept_confidence_threshold=${threshold}.`
 	};
 }
 function createJevReviewer(runtime) {

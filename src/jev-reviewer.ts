@@ -26,36 +26,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// The reported confidence is always P(ACCEPT), regardless of which choice JEV
+// selected, so the log reads as the accept-side evidence against the accept-side
+// threshold. For an ESCALATE choice that is the complement: probabilities.ACCEPT
+// when present, otherwise 1 - confidence.
+function acceptConfidence(answer: Record<string, unknown> | undefined): number | undefined {
+  if (answer === undefined || answer['type'] !== 'choice') {
+    return undefined
+  }
+  if (answer['choice'] === 'ACCEPT') {
+    const confidence = answer['confidence']
+    return typeof confidence === 'number' && Number.isFinite(confidence) ? confidence : undefined
+  }
+  if (answer['choice'] === 'ESCALATE') {
+    const probabilities = answer['probabilities']
+    if (isRecord(probabilities)) {
+      const acceptProbability = probabilities['ACCEPT']
+      if (typeof acceptProbability === 'number' && Number.isFinite(acceptProbability)) {
+        return acceptProbability
+      }
+    }
+    const confidence = answer['confidence']
+    if (typeof confidence === 'number' && Number.isFinite(confidence)) {
+      return Number((1 - confidence).toFixed(4))
+    }
+  }
+  return undefined
+}
+
 export function mapJevPermissionDecision(
   answers: Record<string, { type: string; [key: string]: unknown }>,
   threshold: number,
 ): ReviewAssessment {
-  const answer = answers[JEV_PERMISSION_QUESTION_NAME]
-  const confidence = answer !== undefined && isRecord(answer) ? answer['confidence'] : undefined
-  const choice = answer !== undefined && isRecord(answer) ? answer['choice'] : undefined
-  const confidenceText = typeof confidence === 'number' && Number.isFinite(confidence) ? String(confidence) : 'missing'
+  const raw = answers[JEV_PERMISSION_QUESTION_NAME]
+  const answer = raw !== undefined && isRecord(raw) ? raw : undefined
+  const choice = answer?.['choice']
+  const confidence = acceptConfidence(answer)
+  const confidenceText = confidence === undefined ? 'missing' : String(confidence)
 
-  if (
-    answer !== undefined &&
-    answer.type === 'choice' &&
-    choice === 'ACCEPT' &&
-    typeof confidence === 'number' &&
-    Number.isFinite(confidence) &&
-    confidence >= threshold
-  ) {
+  if (answer !== undefined && choice === 'ACCEPT' && confidence !== undefined && confidence >= threshold) {
     return {
       outcome: 'ACCEPT',
-      rationale: `JEV permission_decision=ACCEPT; confidence=${confidence}; threshold=${threshold}.`,
+      rationale: `JEV permission_decision=ACCEPT; accept_confidence=${confidence}; accept_confidence_threshold=${threshold}.`,
     }
   }
 
-  const decisionText =
-    answer !== undefined && answer.type === 'choice' && (choice === 'ACCEPT' || choice === 'ESCALATE')
-      ? String(choice)
-      : 'INVALID'
+  const decisionText = choice === 'ACCEPT' || choice === 'ESCALATE' ? String(choice) : 'INVALID'
   return {
     outcome: 'ESCALATE',
-    rationale: `JEV permission_decision=${decisionText}; confidence=${confidenceText}; threshold=${threshold}.`,
+    rationale: `JEV permission_decision=${decisionText}; accept_confidence=${confidenceText}; accept_confidence_threshold=${threshold}.`,
   }
 }
 

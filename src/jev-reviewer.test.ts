@@ -10,7 +10,7 @@ describe('JEV permission mapping', () => {
       ),
     ).toEqual({
       outcome: 'ACCEPT',
-      rationale: 'JEV permission_decision=ACCEPT; confidence=0.97; threshold=0.95.',
+      rationale: 'JEV permission_decision=ACCEPT; accept_confidence=0.97; accept_confidence_threshold=0.95.',
     })
   })
 
@@ -20,7 +20,35 @@ describe('JEV permission mapping', () => {
       0.95,
     )
     expect(assessment.outcome).toBe('ESCALATE')
-    expect(assessment.rationale).toContain('threshold=0.95')
+    expect(assessment.rationale).toContain('accept_confidence_threshold=0.95')
+  })
+
+  it('reports the accept-side confidence when JEV chooses ESCALATE', () => {
+    expect(
+      mapJevPermissionDecision(
+        {
+          permission_decision: {
+            type: 'choice',
+            choice: 'ESCALATE',
+            probabilities: { ACCEPT: 0.03, ESCALATE: 0.97 },
+            confidence: 0.97,
+          },
+        },
+        0.95,
+      ),
+    ).toEqual({
+      outcome: 'ESCALATE',
+      rationale: 'JEV permission_decision=ESCALATE; accept_confidence=0.03; accept_confidence_threshold=0.95.',
+    })
+  })
+
+  it('falls back to 1 - confidence when ESCALATE has no probabilities', () => {
+    const assessment = mapJevPermissionDecision(
+      { permission_decision: { type: 'choice', choice: 'ESCALATE', confidence: 0.99 } },
+      0.95,
+    )
+    expect(assessment.outcome).toBe('ESCALATE')
+    expect(assessment.rationale).toContain('accept_confidence=0.01')
   })
 
   it.each([
