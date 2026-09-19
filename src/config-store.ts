@@ -194,45 +194,6 @@ export class AutoReviewConfigStore {
     }
   }
 
-  reset(snapshot: AutoReviewScopeSnapshot): ConfigMutationResult {
-    if (!snapshot.valid && snapshot.source === undefined) {
-      return {
-        ok: false,
-        message: `Cannot reset unreadable config at '${snapshot.path}': ${snapshot.issue.message}`,
-      }
-    }
-
-    const conflict = this.checkForConflict(snapshot)
-    if (conflict !== undefined) {
-      return { ok: false, message: conflict }
-    }
-
-    if (snapshot.source !== undefined) {
-      try {
-        this.fileSystem.unlink(snapshot.path)
-      } catch (error) {
-        return {
-          ok: false,
-          message: `Failed to reset config at '${snapshot.path}': ${error instanceof Error ? error.message : String(error)}`,
-        }
-      }
-    }
-
-    const loadResult = this.loadWithOverride(snapshot, undefined)
-    return {
-      ok: true,
-      loadResult,
-      snapshot: {
-        scope: snapshot.scope,
-        cwd: snapshot.cwd,
-        path: snapshot.path,
-        source: undefined,
-        valid: true,
-        config: {},
-      },
-    }
-  }
-
   private loadWithOverride(snapshot: AutoReviewScopeSnapshot, source: string | undefined): LoadConfigResult {
     return loadAutoReviewConfig({
       cwd: snapshot.cwd,

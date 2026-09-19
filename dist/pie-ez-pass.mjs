@@ -5042,37 +5042,6 @@ var AutoReviewConfigStore = class {
 			}
 		};
 	}
-	reset(snapshot) {
-		if (!snapshot.valid && snapshot.source === void 0) return {
-			ok: false,
-			message: `Cannot reset unreadable config at '${snapshot.path}': ${snapshot.issue.message}`
-		};
-		const conflict = this.checkForConflict(snapshot);
-		if (conflict !== void 0) return {
-			ok: false,
-			message: conflict
-		};
-		if (snapshot.source !== void 0) try {
-			this.fileSystem.unlink(snapshot.path);
-		} catch (error) {
-			return {
-				ok: false,
-				message: `Failed to reset config at '${snapshot.path}': ${error instanceof Error ? error.message : String(error)}`
-			};
-		}
-		return {
-			ok: true,
-			loadResult: this.loadWithOverride(snapshot, void 0),
-			snapshot: {
-				scope: snapshot.scope,
-				cwd: snapshot.cwd,
-				path: snapshot.path,
-				source: void 0,
-				valid: true,
-				config: {}
-			}
-		};
-	}
 	loadWithOverride(snapshot, source) {
 		return loadAutoReviewConfig({
 			cwd: snapshot.cwd,
