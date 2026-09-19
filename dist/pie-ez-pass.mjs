@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, closeSync, constants, lstatSync, mkdirSync, 
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process$1 from "node:process";
+import "@earendil-works/pi-tui";
 //#region node_modules/zod/v4/core/core.js
 var _a$1;
 function $constructor(name, initializer, params) {

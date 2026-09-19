@@ -60,7 +60,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "^0.80.10 || ^0.81.0",
-    "@earendil-works/pi-coding-agent": "^0.80.10 || ^0.81.0"
+    "@earendil-works/pi-coding-agent": "^0.80.10 || ^0.81.0",
+    "@earendil-works/pi-tui": "^0.80.10 || ^0.81.0"
   },
   "engines": {
     "node": ">=22.19.0"
