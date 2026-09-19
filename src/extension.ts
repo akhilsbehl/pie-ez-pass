@@ -182,10 +182,59 @@ function installAutoReviewExtension(
     }
   }
 
+  function effectiveConfigsEqual(left: AutoReviewConfig | undefined, right: AutoReviewConfig | undefined): boolean {
+    if (left === undefined || right === undefined) {
+      return left === right
+    }
+    return JSON.stringify(left) === JSON.stringify(right)
+  }
+
+  function refreshGenerationIfNeeded(): void {
+    // Config is re-read on every reviewed call so that global/project layer
+    // edits (via /ez-pass in any session, or direct file edits) take effect
+    // in all live sessions without requiring a restart. Rebuilds happen only
+    // when the effective config actually changed.
+    if (sessionRuntime === undefined) {
+      return
+    }
+    let result: LoadConfigResult
+    try {
+      result = loadConfig(sessionRuntime.cwd)
+    } catch {
+      // A crashing loader must not take down the permission boundary;
+      // the previous generation (if any) keeps enforcing its snapshot.
+      return
+    }
+    reportIssues(result)
+    if (effectiveConfigsEqual(generation?.config, result.config)) {
+      return
+    }
+    let candidate: ReviewerGeneration | undefined
+    try {
+      candidate = createGeneration(result.config)
+    } catch (error) {
+      ignoreDiagnostic(`failed to refresh reviewer: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    if (candidate === undefined) {
+      return
+    }
+    const previous = generation
+    generation = candidate
+    previous?.controller.abort()
+    try {
+      reviewLog.debug('permission.config_reloaded', { value: sessionRuntime.cwd })
+    } catch {
+      // Logging must never change the permission decision.
+    }
+  }
+
   async function handleToolCall(event: ToolCallEvent, context: ExtensionContext): Promise<ToolCallEventResult> {
     if (!REVIEWED_TOOLS.has(event.toolName)) {
       return {}
     }
+
+    refreshGenerationIfNeeded()
 
     const details = buildPermissionDetails(event)
     reviewLog.review('permission.tool_call', {

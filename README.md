@@ -15,6 +15,7 @@ The extension uses Pi's `tool_call` hook and Pi's local `ctx.ui.confirm` UI. Thi
 - Provider, parser, reviewer, JEV, and configuration failures use the same local confirmation flow.
 - Without an interactive UI (`ctx.hasUI === false`), escalation and failures fail closed.
 - Approval applies only to the current call; there are no session approvals.
+- The effective config (global + project layers) is re-read on every reviewed call, so edits via `/ez-pass` in any session or direct file edits take effect in all live sessions; the reviewer is rebuilt only when the effective config actually changed.
 - Other tools pass through unchanged.
 
 JEV review requires `OPENROUTER_API_KEY` in the environment.

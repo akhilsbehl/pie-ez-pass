@@ -8594,8 +8594,38 @@ function installAutoReviewExtension(pi, configStore, dependencies) {
 	function reportIssues(result) {
 		for (const issue of result.issues) `${issue.sourcePath}${issue.message}`;
 	}
+	function effectiveConfigsEqual(left, right) {
+		if (left === void 0 || right === void 0) return left === right;
+		return JSON.stringify(left) === JSON.stringify(right);
+	}
+	function refreshGenerationIfNeeded() {
+		if (sessionRuntime === void 0) return;
+		let result;
+		try {
+			result = loadConfig(sessionRuntime.cwd);
+		} catch {
+			return;
+		}
+		reportIssues(result);
+		if (effectiveConfigsEqual(generation?.config, result.config)) return;
+		let candidate;
+		try {
+			candidate = createGeneration(result.config);
+		} catch (error) {
+			`${error instanceof Error ? error.message : String(error)}`;
+			return;
+		}
+		if (candidate === void 0) return;
+		const previous = generation;
+		generation = candidate;
+		previous?.controller.abort();
+		try {
+			reviewLog.debug("permission.config_reloaded", { value: sessionRuntime.cwd });
+		} catch {}
+	}
 	async function handleToolCall(event, context) {
 		if (!REVIEWED_TOOLS.has(event.toolName)) return {};
+		refreshGenerationIfNeeded();
 		const details = buildPermissionDetails(event);
 		reviewLog.review("permission.tool_call", {
 			requestId: details.requestId,

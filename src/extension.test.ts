@@ -266,6 +266,69 @@ describe('tool_call permission boundary', () => {
   })
   it('keeps bash reviewed', async () => { const { handlers, context, reviewer } = setup('accept'); await handlers.get('tool_call')?.(call, context); expect(reviewer).toHaveBeenCalledOnce() })
   it('passes unreviewed tools through', async () => { const { handlers, context, reviewer } = setup('escalate'); expect(await handlers.get('tool_call')?.({ ...call, toolName: 'read' }, context)).toEqual({}); expect(reviewer).not.toHaveBeenCalled() })
+  it('re-reads config on every reviewed call and rebuilds only when it changed', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>()
+    const pi = {
+      on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)),
+      registerCommand: vi.fn(),
+      events: { emit: vi.fn(), on: vi.fn() },
+    }
+    const base = {
+      provider: 'test',
+      model: 'review',
+      reasoning: 'off' as const,
+      timeoutMs: 1000,
+      jev_accept_confidence_threshold: 0.95,
+      rules: TEST_RULES,
+    }
+    const first = { ...base, use_jev: false }
+    const second = { ...base, use_jev: true }
+    const loadConfig = vi.fn(() => ({ config: first, issues: [], globalPath: '', projectPath: '' }))
+    const reviewer = vi.fn(async () => ({ kind: 'accept' }))
+    const createReviewer = vi.fn(() => reviewer)
+    const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
+    createAutoReviewExtension(pi as never, { loadConfig: loadConfig as never, createReviewer: createReviewer as never, reviewLog })
+    const context = { cwd: '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: true, ui: { confirm: vi.fn(async () => true) } }
+    handlers.get('session_start')?.({}, context)
+    expect(createReviewer).toHaveBeenCalledTimes(1)
+    await handlers.get('tool_call')?.(call, context)
+    expect(createReviewer).toHaveBeenCalledTimes(1)
+    loadConfig.mockReturnValue({ config: second, issues: [], globalPath: '', projectPath: '' })
+    await handlers.get('tool_call')?.(call, context)
+    expect(createReviewer).toHaveBeenCalledTimes(2)
+    expect(createReviewer).toHaveBeenLastCalledWith(expect.objectContaining({ config: second }))
+  })
+  it('fails closed in the same session when the config becomes invalid', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>()
+    const pi = {
+      on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)),
+      registerCommand: vi.fn(),
+      events: { emit: vi.fn(), on: vi.fn() },
+    }
+    const loadConfig = vi.fn(() => ({
+      config: {
+        provider: 'test',
+        model: 'review',
+        reasoning: 'off' as const,
+        timeoutMs: 1000,
+        use_jev: false,
+        jev_accept_confidence_threshold: 0.95,
+        rules: TEST_RULES,
+      },
+      issues: [],
+      globalPath: '',
+      projectPath: '',
+    }))
+    const reviewer = vi.fn(async () => ({ kind: 'accept' }))
+    const reviewLog: ReviewLog = { review: vi.fn(), debug: vi.fn() }
+    createAutoReviewExtension(pi as never, { loadConfig: loadConfig as never, createReviewer: (() => reviewer) as never, reviewLog })
+    const context = { cwd: '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: false, ui: { confirm: vi.fn(async () => true) } }
+    handlers.get('session_start')?.({}, context)
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
+    loadConfig.mockReturnValue({ config: undefined, issues: [{ sourcePath: '', message: 'use_jev: required' }], globalPath: '', projectPath: '' } as never)
+    expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
+    expect(reviewer).toHaveBeenCalledTimes(1)
+  })
   it.each(['edit', 'write'] as const)('escalates unmatched %s paths to a human without LLM review', async toolName => {
     const rules = { allow: { commands: [], paths: [] }, block: { commands: [], paths: [] } } as typeof DEFAULT_RULES
     const { handlers, context, reviewer } = setup('escalate', { rules, approved: true })
