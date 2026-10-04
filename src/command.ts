@@ -1,7 +1,7 @@
 import type { AutoReviewConfigStore, AutoReviewConfigScope, AutoReviewScopeSnapshot } from './config-store.js'
 import type { AutoReviewConfig, AutoReviewConfigFile, LoadConfigResult } from './config.js'
 import type { ExtensionAPI, ExtensionCommandContext, ModelRegistry } from '@earendil-works/pi-coding-agent'
-import { DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD, DEFAULT_MODEL, DEFAULT_PROVIDER, REASONING_LEVELS, autoReviewConfigSchema } from './config.js'
+import { DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD, DEFAULT_MODEL, DEFAULT_PROVIDER, REASONING_LEVELS, autoReviewConfigSchema } from './config.js'
 
 const COMMAND_NAME = 'ez-pass'
 const USAGE = 'Usage: /ez-pass [show|path|help]'
@@ -14,7 +14,7 @@ const DEFAULT_CONFIG = {
   model: DEFAULT_MODEL,
   reasoning: 'low' as const,
   timeoutMs: 90_000,
-  jev_accept_confidence_threshold: DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD,
+  jev_escalate_confidence_threshold: DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD,
 }
 
 const configFields = [
@@ -23,7 +23,7 @@ const configFields = [
   'reasoning',
   'timeoutMs',
   'use_jev',
-  'jev_accept_confidence_threshold',
+  'jev_escalate_confidence_threshold',
   'additionalPolicy',
 ] as const
 
@@ -35,7 +35,7 @@ const fieldLabels: Record<ConfigField, string> = {
   reasoning: 'Reasoning',
   timeoutMs: 'Timeout',
   use_jev: 'Use JEV',
-  jev_accept_confidence_threshold: 'JEV accept confidence threshold',
+  jev_escalate_confidence_threshold: 'JEV escalate confidence threshold',
   additionalPolicy: 'Additional policy',
 }
 
@@ -80,10 +80,10 @@ function resolveView(layers: ConfigLayers): ConfigView {
     model: layers.project.model ?? layers.global.model ?? DEFAULT_CONFIG.model,
     reasoning: layers.project.reasoning ?? layers.global.reasoning ?? DEFAULT_CONFIG.reasoning,
     timeoutMs: layers.project.timeoutMs ?? layers.global.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
-    jev_accept_confidence_threshold:
-      layers.project.jev_accept_confidence_threshold ??
-      layers.global.jev_accept_confidence_threshold ??
-      DEFAULT_CONFIG.jev_accept_confidence_threshold,
+    jev_escalate_confidence_threshold:
+      layers.project.jev_escalate_confidence_threshold ??
+      layers.global.jev_escalate_confidence_threshold ??
+      DEFAULT_CONFIG.jev_escalate_confidence_threshold,
     ...(useJev === undefined ? {} : { use_jev: useJev }),
     ...(additionalPolicy === undefined ? {} : { additionalPolicy }),
   }
@@ -110,7 +110,7 @@ function formatFieldValue(field: ConfigField, value: unknown): string {
   if (field === 'use_jev') {
     return typeof value === 'boolean' ? String(value) : 'not set'
   }
-  if (field === 'jev_accept_confidence_threshold' && typeof value === 'number') {
+  if (field === 'jev_escalate_confidence_threshold' && typeof value === 'number') {
     return String(value)
   }
   return String(value ?? 'not set')
@@ -148,8 +148,8 @@ function removeField(config: AutoReviewConfigFile, field: ConfigField): AutoRevi
     case 'use_jev':
       delete next.use_jev
       break
-    case 'jev_accept_confidence_threshold':
-      delete next.jev_accept_confidence_threshold
+    case 'jev_escalate_confidence_threshold':
+      delete next.jev_escalate_confidence_threshold
       break
     case 'additionalPolicy':
       delete next.additionalPolicy
@@ -177,8 +177,8 @@ function setField(
       return { ...config, timeoutMs: Number(value) }
     case 'use_jev':
       return { ...config, use_jev: value === true || value === 'true' }
-    case 'jev_accept_confidence_threshold':
-      return { ...config, jev_accept_confidence_threshold: Number(value) }
+    case 'jev_escalate_confidence_threshold':
+      return { ...config, jev_escalate_confidence_threshold: Number(value) }
     case 'additionalPolicy':
       return { ...config, additionalPolicy: String(value) }
   }
@@ -300,23 +300,23 @@ async function editJevThreshold(
   draft: AutoReviewConfigFile,
   currentValue: number,
 ): Promise<AutoReviewConfigFile> {
-  const action = await ctx.ui.select('Configure JEV accept confidence threshold', [INHERIT, 'Enter threshold...'])
+  const action = await ctx.ui.select('Configure JEV escalate confidence threshold', [INHERIT, 'Enter threshold...'])
   if (action === INHERIT) {
-    return removeField(draft, 'jev_accept_confidence_threshold')
+    return removeField(draft, 'jev_escalate_confidence_threshold')
   }
   if (action !== 'Enter threshold...') {
     return draft
   }
-  const source = await ctx.ui.input('JEV accept confidence threshold (0 through 1)', String(currentValue))
+  const source = await ctx.ui.input('JEV escalate confidence threshold (0 through 1)', String(currentValue))
   if (source === undefined) {
     return draft
   }
   const value = Number(source.trim())
   if (!Number.isFinite(value) || value < 0 || value > 1) {
-    ctx.ui.notify('jev_accept_confidence_threshold must be a number from 0 through 1.', 'warning')
+    ctx.ui.notify('jev_escalate_confidence_threshold must be a number from 0 through 1.', 'warning')
     return draft
   }
-  return setField(draft, 'jev_accept_confidence_threshold', value)
+  return setField(draft, 'jev_escalate_confidence_threshold', value)
 }
 
 async function editAdditionalPolicy(
@@ -442,11 +442,11 @@ async function openSettingsMenu(ctx: ExtensionCommandContext, controller: AutoRe
       case 'use_jev':
         draft = await editUseJev(ctx, draft)
         break
-      case 'jev_accept_confidence_threshold':
+      case 'jev_escalate_confidence_threshold':
         draft = await editJevThreshold(
           ctx,
           draft,
-          Number(view.config.jev_accept_confidence_threshold ?? DEFAULT_CONFIG.jev_accept_confidence_threshold),
+          Number(view.config.jev_escalate_confidence_threshold ?? DEFAULT_CONFIG.jev_escalate_confidence_threshold),
         )
         break
       case 'additionalPolicy':

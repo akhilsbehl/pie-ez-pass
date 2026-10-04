@@ -8,7 +8,7 @@ const config = {
   reasoning: 'off' as const,
   timeoutMs: 1_000,
   use_jev: false,
-  jev_accept_confidence_threshold: 0.95,
+  jev_escalate_confidence_threshold: 0.6,
 }
 
 const details = (): ReviewPermissionDetails => ({

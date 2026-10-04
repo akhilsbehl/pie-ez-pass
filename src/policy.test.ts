@@ -9,7 +9,7 @@ describe('personal default review policy', () => {
       reasoning: 'low',
       timeoutMs: 90_000,
       use_jev: true,
-      jev_accept_confidence_threshold: 0.95,
+      jev_escalate_confidence_threshold: 0.6,
     })
 
     expect(prompt).toContain('\"outcome\": \"ACCEPT\" | \"ESCALATE\"')
@@ -31,7 +31,7 @@ describe('personal default review policy', () => {
       reasoning: 'low',
       timeoutMs: 90_000,
       use_jev: true,
-      jev_accept_confidence_threshold: 0.95,
+      jev_escalate_confidence_threshold: 0.6,
       additionalPolicy: 'Prefer explicit confirmation for this test action.',
     })
 

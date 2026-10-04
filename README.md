@@ -52,7 +52,7 @@ Defaults (note `use_jev` has no silent default — it is required in the effecti
   "reasoning": "low",
   "timeoutMs": 90000,
   "use_jev": true,
-  "jev_accept_confidence_threshold": 0.95,
+  "jev_escalate_confidence_threshold": 0.6,
   "rules": { "allow": { "commands": [], "paths": [] }, "block": { "commands": [], "paths": [] } }
 }
 ```
@@ -62,7 +62,7 @@ Defaults (note `use_jev` has no silent default — it is required in the effecti
 | Global | `~/.pi/agent/extensions/pie-ez-pass/config.json` |
 | Project | `<cwd>/.pi/extensions/pie-ez-pass/config.json` |
 
-Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, `use_jev`, `jev_accept_confidence_threshold`, and optional `additionalPolicy`; global config additionally supports `rules`. `use_jev` is required in the effective configuration — omission is a configuration error and must not silently select JEV or the legacy reviewer. `jev_accept_confidence_threshold` is a number from `0` through `1` and defaults to `0.95` when omitted. Layer files may omit fields to override only selected values; “Inherit” in `/ez-pass` removes a field from the layer being edited. Missing rule arrays default to empty. The [example config](config/config.example.json) contains restrained suggested read/test/build allows, suggested path roots, and a small set of high-risk Bash blocks; users must manually copy the rules they want into their live global config. The extension never seeds or rewrites the live user config. The shared safety policy core is mandatory; additional policy is appended to it. See the [JSON Schema](schemas/config.schema.json).
+Project model/reviewer fields override global fields; permanent `rules` are accepted only from global config. `PI_CODING_AGENT_DIR` replaces `~/.pi/agent` when set. Supported model/reviewer fields are `provider`, `model`, `reasoning`, `timeoutMs`, `use_jev`, `jev_escalate_confidence_threshold`, and optional `additionalPolicy`; global config additionally supports `rules`. `use_jev` is required in the effective configuration — omission is a configuration error and must not silently select JEV or the legacy reviewer. `jev_escalate_confidence_threshold` is a number from `0` through `1` and defaults to `0.6` when omitted. Layer files may omit fields to override only selected values; “Inherit” in `/ez-pass` removes a field from the layer being edited. Missing rule arrays default to empty. The [example config](config/config.example.json) contains restrained suggested read/test/build allows, suggested path roots, and a small set of high-risk Bash blocks; users must manually copy the rules they want into their live global config. The extension never seeds or rewrites the live user config. The shared safety policy core is mandatory; additional policy is appended to it. See the [JSON Schema](schemas/config.schema.json).
 
 Use the interactive settings command to edit and immediately apply configuration:
 

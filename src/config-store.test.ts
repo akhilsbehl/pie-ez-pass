@@ -75,20 +75,20 @@ describe('JEV configuration', () => {
     expect(result.issues.map(issue => issue.message).join('\n')).toContain('use_jev')
   })
 
-  it('defaults the JEV threshold to 0.95 when omitted', () => {
+  it('defaults the JEV threshold to 0.6 when omitted', () => {
     const result = memoryStore({ use_jev: true }).load('/work/repo')
     expect(result.config?.use_jev).toBe(true)
-    expect(result.config?.jev_accept_confidence_threshold).toBe(0.95)
+    expect(result.config?.jev_escalate_confidence_threshold).toBe(0.6)
   })
 
   it('accepts explicit JEV selection and project threshold override', () => {
-    const result = memoryStore({ use_jev: true }, { use_jev: false, jev_accept_confidence_threshold: 0.8 }).load('/work/repo')
+    const result = memoryStore({ use_jev: true }, { use_jev: false, jev_escalate_confidence_threshold: 0.8 }).load('/work/repo')
     expect(result.config?.use_jev).toBe(false)
-    expect(result.config?.jev_accept_confidence_threshold).toBe(0.8)
+    expect(result.config?.jev_escalate_confidence_threshold).toBe(0.8)
   })
 
   it.each([[-0.1], [1.1], ['high'], [Number.NaN]])('fails closed for invalid threshold %s', value => {
-    const result = memoryStore({ use_jev: true, jev_accept_confidence_threshold: value }).load('/work/repo')
+    const result = memoryStore({ use_jev: true, jev_escalate_confidence_threshold: value }).load('/work/repo')
     expect(result.config).toBeUndefined()
   })
 

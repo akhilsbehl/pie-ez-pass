@@ -31,7 +31,7 @@ function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?:
               reasoning: 'off',
               timeoutMs: 1000,
               use_jev: false,
-              jev_accept_confidence_threshold: 0.95,
+              jev_escalate_confidence_threshold: 0.6,
               rules: options.rules ?? TEST_RULES,
             },
       issues: [],
@@ -278,7 +278,7 @@ describe('tool_call permission boundary', () => {
       model: 'review',
       reasoning: 'off' as const,
       timeoutMs: 1000,
-      jev_accept_confidence_threshold: 0.95,
+      jev_escalate_confidence_threshold: 0.6,
       rules: TEST_RULES,
     }
     const first = { ...base, use_jev: false }
@@ -312,7 +312,7 @@ describe('tool_call permission boundary', () => {
         reasoning: 'off' as const,
         timeoutMs: 1000,
         use_jev: false,
-        jev_accept_confidence_threshold: 0.95,
+        jev_escalate_confidence_threshold: 0.6,
         rules: TEST_RULES,
       },
       issues: [],

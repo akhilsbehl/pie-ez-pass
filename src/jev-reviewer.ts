@@ -26,34 +26,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// The reported confidence is always P(ACCEPT), regardless of which choice JEV
-// selected, so the log reads as the accept-side evidence against the accept-side
-// threshold. For an ESCALATE choice that is the complement: probabilities.ACCEPT
-// when present, otherwise 1 - confidence.
-function acceptConfidence(answer: Record<string, unknown> | undefined): number | undefined {
+// The reported confidence is always P(ESCALATE), regardless of which choice JEV
+// selected, so the log reads as the escalate-side evidence against the
+// escalate-side threshold. For an ACCEPT choice that is the complement:
+// probabilities.ESCALATE when present, otherwise 1 - confidence.
+function escalateConfidence(answer: Record<string, unknown> | undefined): number | undefined {
   if (answer === undefined || answer['type'] !== 'choice') {
     return undefined
   }
-  if (answer['choice'] === 'ACCEPT') {
-    const confidence = answer['confidence']
-    return typeof confidence === 'number' && Number.isFinite(confidence) ? confidence : undefined
+  const probabilities = answer['probabilities']
+  if (isRecord(probabilities)) {
+    const escalateProbability = probabilities['ESCALATE']
+    if (typeof escalateProbability === 'number' && Number.isFinite(escalateProbability)) {
+      return escalateProbability
+    }
+  }
+  const confidence = answer['confidence']
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
+    return undefined
   }
   if (answer['choice'] === 'ESCALATE') {
-    const probabilities = answer['probabilities']
-    if (isRecord(probabilities)) {
-      const acceptProbability = probabilities['ACCEPT']
-      if (typeof acceptProbability === 'number' && Number.isFinite(acceptProbability)) {
-        return acceptProbability
-      }
-    }
-    const confidence = answer['confidence']
-    if (typeof confidence === 'number' && Number.isFinite(confidence)) {
-      return Number((1 - confidence).toFixed(4))
-    }
+    return confidence
+  }
+  if (answer['choice'] === 'ACCEPT') {
+    return Number((1 - confidence).toFixed(4))
   }
   return undefined
 }
 
+// ACCEPT is the default. JEV must itself choose ESCALATE with P(ESCALATE) at or
+// above the threshold to escalate. A malformed answer still fails closed.
 export function mapJevPermissionDecision(
   answers: Record<string, { type: string; [key: string]: unknown }>,
   threshold: number,
@@ -61,21 +63,18 @@ export function mapJevPermissionDecision(
   const raw = answers[JEV_PERMISSION_QUESTION_NAME]
   const answer = raw !== undefined && isRecord(raw) ? raw : undefined
   const choice = answer?.['choice']
-  const confidence = acceptConfidence(answer)
+  const confidence = escalateConfidence(answer)
   const confidenceText = confidence === undefined ? 'missing' : String(confidence)
-
-  if (answer !== undefined && choice === 'ACCEPT' && confidence !== undefined && confidence >= threshold) {
-    return {
-      outcome: 'ACCEPT',
-      rationale: `JEV permission_decision=ACCEPT; accept_confidence=${confidence}; accept_confidence_threshold=${threshold}.`,
-    }
-  }
-
   const decisionText = choice === 'ACCEPT' || choice === 'ESCALATE' ? String(choice) : 'INVALID'
-  return {
-    outcome: 'ESCALATE',
-    rationale: `JEV permission_decision=${decisionText}; accept_confidence=${confidenceText}; accept_confidence_threshold=${threshold}.`,
+  const rationale = `JEV permission_decision=${decisionText}; escalate_confidence=${confidenceText}; escalate_confidence_threshold=${threshold}.`
+
+  if (answer !== undefined && choice === 'ACCEPT') {
+    return { outcome: 'ACCEPT', rationale }
   }
+  if (answer !== undefined && choice === 'ESCALATE' && confidence !== undefined && confidence < threshold) {
+    return { outcome: 'ACCEPT', rationale }
+  }
+  return { outcome: 'ESCALATE', rationale }
 }
 
 export function createJevReviewer(runtime: JevReviewerRuntime): ReviewAuthorizer {
@@ -83,7 +82,7 @@ export function createJevReviewer(runtime: JevReviewerRuntime): ReviewAuthorizer
     const startedAt = Date.now()
     const transcript = renderTranscript(runtime.sessionManager.buildContextEntries())
     const state = buildJevState(runtime.config, transcript, details)
-    const threshold = runtime.config.jev_accept_confidence_threshold
+    const threshold = runtime.config.jev_escalate_confidence_threshold
     const duration = (): number => Math.max(0, Date.now() - startedAt)
 
     try {

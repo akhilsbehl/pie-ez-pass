@@ -8,7 +8,7 @@ export const EXTENSION_ID = 'pie-ez-pass'
 export const DEFAULT_PROVIDER = 'openai-codex'
 export const DEFAULT_MODEL = 'codex-auto-review'
 export const DEFAULT_TIMEOUT_MS = 90_000
-export const DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD = 0.95
+export const DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD = 0.6
 export const CONFIG_SCHEMA_URL =
   'https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json'
 
@@ -34,7 +34,7 @@ const configFileShape = {
   timeoutMs: z.number().int().positive().max(300_000).optional(),
   additionalPolicy: z.string().trim().min(1).optional(),
   use_jev: z.boolean().optional(),
-  jev_accept_confidence_threshold: z.number().min(0).max(1).optional(),
+  jev_escalate_confidence_threshold: z.number().min(0).max(1).optional(),
 }
 
 const autoReviewConfigFileSchema = z.strictObject({ ...configFileShape, rules: rulesSchema.optional() })
@@ -48,7 +48,7 @@ export const autoReviewConfigSchema = z
     reasoning: z.enum(REASONING_LEVELS).default('low'),
     timeoutMs: z.number().int().positive().max(300_000).default(DEFAULT_TIMEOUT_MS),
     use_jev: z.boolean(),
-    jev_accept_confidence_threshold: z.number().min(0).max(1).default(DEFAULT_JEV_ACCEPT_CONFIDENCE_THRESHOLD),
+    jev_escalate_confidence_threshold: z.number().min(0).max(1).default(DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD),
     rules: rulesSchema.default(() => structuredClone(DEFAULT_RULES)),
   })
 
@@ -63,7 +63,7 @@ export interface AutoReviewConfigFile {
   timeoutMs?: number | undefined
   additionalPolicy?: string | undefined
   use_jev?: boolean | undefined
-  jev_accept_confidence_threshold?: number | undefined
+  jev_escalate_confidence_threshold?: number | undefined
   rules?: { allow: { commands: string[]; paths: string[] }; block: { commands: string[]; paths: string[] } } | undefined
 }
 

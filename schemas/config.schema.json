@@ -43,8 +43,8 @@
     "use_jev": {
       "type": "boolean"
     },
-    "jev_accept_confidence_threshold": {
-      "default": 0.95,
+    "jev_escalate_confidence_threshold": {
+      "default": 0.6,
       "type": "number",
       "minimum": 0,
       "maximum": 1
