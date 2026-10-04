@@ -27,7 +27,8 @@ function makeLog(): ReviewLog {
   return { review: vi.fn(), debug: vi.fn() }
 }
 
-function makeReviewer(response: string, providerError = false) {
+function makeReviewer(response: string | string[], providerError = false) {
+  const responses = Array.isArray(response) ? [...response] : undefined
   const provider = {
     streamSimple: vi.fn(() => ({
       result: async () => {
@@ -35,7 +36,7 @@ function makeReviewer(response: string, providerError = false) {
           throw new Error('provider unavailable')
         }
         return {
-          content: [{ type: 'text', text: response }],
+          content: [{ type: 'text', text: responses ? (responses.length > 1 ? responses.shift() : responses[0]) : response }],
           stopReason: 'stop',
         }
       },
@@ -71,6 +72,46 @@ describe('reviewer outcomes', () => {
     expect(request.message).toContain('This is destructive.')
   })
 
+  it('retries when the first response is prose and accepts a later JSON reply', async () => {
+    const { authorize, provider } = makeReviewer(['Approve — harmless.', '{"outcome":"ACCEPT","rationale":"Routine."}'])
+
+    await expect(authorize(details(), makeLog())).resolves.toEqual({ kind: 'accept' })
+    expect(provider.streamSimple).toHaveBeenCalledTimes(2)
+  })
+
+  it('logs the attempt count on success so recoveries are visible', async () => {
+    const log = makeLog()
+    const { authorize } = makeReviewer(['Approve.', '{"outcome":"ACCEPT","rationale":"ok"}'])
+
+    await authorize(details(), log)
+    expect(log.review).toHaveBeenCalledWith('auto_review.decision', expect.objectContaining({ outcome: 'ACCEPT', attempts: 2 }))
+  })
+
+  it('feeds the rejected reply and the problem back on retry', async () => {
+    const { authorize, provider } = makeReviewer(['Approve — harmless.', '{"outcome":"ACCEPT","rationale":"Routine."}'])
+
+    await authorize(details(), makeLog())
+    const second = (provider.streamSimple.mock.calls[1] as unknown[])[1] as { messages: { content: string }[] }
+    const content = second.messages[0]!.content
+    expect(content).toContain('Approve — harmless.')
+    expect(content).toContain('did not contain a JSON object')
+  })
+
+  it('names the offending field when JSON has the wrong shape', async () => {
+    const { authorize, provider } = makeReviewer(['{"outcome":"APPROVE","rationale":"ok"}', '{"outcome":"ACCEPT","rationale":"ok"}'])
+
+    await authorize(details(), makeLog())
+    const second = (provider.streamSimple.mock.calls[1] as unknown[])[1] as { messages: { content: string }[] }
+    expect(second.messages[0]!.content).toContain('outcome:')
+  })
+
+  it('ends the user prompt with the JSON output reminder', async () => {
+    const { authorize, provider } = makeReviewer('{"outcome":"ACCEPT","rationale":"ok"}')
+    await authorize(details(), makeLog())
+    const ctx = (provider.streamSimple.mock.calls[0] as unknown[])[1] as { messages: { content: string }[] }
+    expect(ctx.messages[0]!.content.trimEnd()).toMatch(/"outcome": "ACCEPT" \| "ESCALATE"[^]*\}$/)
+  })
+
   it('escalates provider failures', async () => {
     const { authorize } = makeReviewer('', true)
 
@@ -90,7 +131,7 @@ describe('reviewer outcomes', () => {
         errorMessage: expect.stringContaining('JSON'),
         responsePreview: 'not-json',
         responseBlockTypes: 'text',
-        attempts: 1,
+        attempts: 3,
         stopReason: 'stop',
       }),
     )

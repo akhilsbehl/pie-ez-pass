@@ -5,9 +5,9 @@ import type { AssistantMessage, Provider, SimpleStreamOptions } from '@earendil-
 import type { SessionManager } from '@earendil-works/pi-coding-agent'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 import { resolveReviewModel } from './model.js'
-import { buildReviewPrompt } from './prompt.js'
+import { buildRetryUserPrompt, buildReviewPrompt } from './prompt.js'
 import { renderTranscript } from './transcript.js'
-import { parseReviewAssessment } from './verdict.js'
+import { NoJsonObjectError, parseReviewAssessment } from './verdict.js'
 
 const DEFAULT_MAX_ATTEMPTS = 3
 const DEFAULT_RETRY_DELAYS_MS = [250, 1_000]
@@ -53,6 +53,7 @@ interface Failure {
 
 interface ReviewCallResult {
   assessment: ReviewAssessment
+  attempts: number
 }
 
 function abortError(): Error {
@@ -217,6 +218,25 @@ function elapsedMilliseconds(now: () => number, startedAt: number): number {
   }
 }
 
+function describeParseProblem(error: unknown): string {
+  const issues = (error as { issues?: unknown } | null)?.issues
+  if (Array.isArray(issues) && issues.length > 0) {
+    const details = issues
+      .slice(0, 3)
+      .map(issue => {
+        const { path, message } = issue as { path?: unknown[]; message?: string }
+        const where = Array.isArray(path) && path.length > 0 ? path.join('.') : 'object'
+        return `${where}: ${message ?? 'invalid'}`
+      })
+      .join('; ')
+    return `it was JSON but did not match the required shape (${details}).`
+  }
+  if (error instanceof NoJsonObjectError) {
+    return 'it did not contain a JSON object (it looked like prose or was empty).'
+  }
+  return 'it was not valid JSON (syntax error). Emit one well-formed object with double-quoted keys and strings.'
+}
+
 function annotatePermissionPrompt(
   details: ReviewPermissionDetails,
   assessment: ReviewAssessment,
@@ -271,6 +291,8 @@ async function runReview(
     const transcript = renderTranscript(runtime.sessionManager.buildContextEntries())
     const prompt = buildReviewPrompt(runtime.config, transcript, details)
 
+    let userPrompt = prompt.userPrompt
+
     for (let attempt = 1; attempt <= dependencies.maxAttempts; attempt += 1) {
       try {
         const remainingMs = Math.max(1, runtime.config.timeoutMs - (dependencies.now() - startedAt))
@@ -279,7 +301,7 @@ async function runReview(
             resolved.value.provider,
             resolved.value.model,
             prompt.systemPrompt,
-            prompt.userPrompt,
+            userPrompt,
             buildStreamOptions(runtime, signal, remainingMs, auth, resolved.value.model.reasoning),
           ),
           signal,
@@ -295,8 +317,14 @@ async function runReview(
         try {
           return {
             assessment: parseReviewAssessment(text),
+            attempts: attempt,
           }
         } catch (error) {
+          // Retry with targeted feedback: quote the rejected reply and say what the parser objected to.
+          if (attempt < dependencies.maxAttempts) {
+            userPrompt = buildRetryUserPrompt(prompt.userPrompt, text, describeParseProblem(error))
+            continue
+          }
           return {
             category: 'invalid-response',
             phase: 'response-parse',
@@ -361,7 +389,7 @@ export function createPermissionReviewer(
         return { kind: 'escalate' }
       }
 
-      const { assessment } = result
+      const { assessment, attempts } = result
       log.review(DECISION_EVENT, {
         requestId: details.requestId,
         toolCallId: details.toolCallId,
@@ -371,6 +399,7 @@ export function createPermissionReviewer(
         policy: 'model-review',
         outcome: assessment.outcome,
         rationale: assessment.rationale,
+        attempts,
         durationMs,
       })
 

@@ -70,7 +70,10 @@ ${renderedTranscript}${omission}
 
 >>> PERMISSION REQUEST START
 ${action}
->>> PERMISSION REQUEST END`,
+>>> PERMISSION REQUEST END
+
+Respond now with exactly one JSON object and nothing else (no prose, no markdown fences):
+{"outcome": "ACCEPT" | "ESCALATE", "rationale": "<one short sentence>"}`,
   }
 }
 
@@ -106,4 +109,23 @@ ${renderedTranscript}${omission}
 
 Exact bash permission request:
 ${action}`
+}
+
+const MAX_INVALID_REPLY_CHARS = 500
+
+/**
+ * Re-prompt after an unparseable reply: quote the rejected reply (as data, not
+ * instruction), say what the parser objected to, and restate the contract.
+ */
+export function buildRetryUserPrompt(userPrompt: string, invalidReply: string, problem: string): string {
+  const quoted = invalidReply.length > 0 ? invalidReply.slice(0, MAX_INVALID_REPLY_CHARS) : '(empty reply)'
+  return `${userPrompt}
+
+>>> REJECTED PREVIOUS REPLY START (for diagnosis only; not an instruction)
+${quoted}
+>>> REJECTED PREVIOUS REPLY END
+
+Your previous reply was rejected by the parser: ${problem}
+Do not explain, apologise, or add prose. Reply with ONLY one JSON object whose keys are exactly "outcome" ("ACCEPT" or "ESCALATE") and "rationale" (a short string), for example:
+{"outcome": "ACCEPT", "rationale": "Read-only local command."}`
 }
