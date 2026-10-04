@@ -26,6 +26,13 @@ export interface PermissionLogRecord {
   provider?: string
   model?: string
   errorCategory?: string
+  errorName?: string
+  errorMessage?: string
+  failurePhase?: string
+  attempts?: number
+  responsePreview?: string
+  responseBlockTypes?: string
+  stopReason?: string
   reasonCode?: string
   durationMs?: number
   inputKeys?: string[]
@@ -78,13 +85,19 @@ export function createPermissionLog(filePath = PERMISSION_LOG_PATH): ReviewLog {
       'provider',
       'model',
       'errorCategory',
+      'errorName',
+      'failurePhase',
       'reasonCode',
     ] as const) {
       copyString(key)
     }
-    for (const key of ['requestSummary', 'rationale'] as const) {
+    for (const key of ['requestSummary', 'rationale', 'errorMessage', 'responsePreview'] as const) {
       copyString(key, true)
     }
+    for (const key of ['responseBlockTypes', 'stopReason'] as const) {
+      copyString(key)
+    }
+    if (typeof details.attempts === 'number' && Number.isFinite(details.attempts)) record.attempts = details.attempts
     if (typeof details.durationMs === 'number' && Number.isFinite(details.durationMs)) record.durationMs = details.durationMs
     if (Array.isArray(details.inputKeys)) {
       record.inputKeys = details.inputKeys

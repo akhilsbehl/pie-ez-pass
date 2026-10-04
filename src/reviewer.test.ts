@@ -76,4 +76,23 @@ describe('reviewer outcomes', () => {
 
     await expect(authorize(details(), makeLog())).resolves.toEqual({ kind: 'escalate' })
   })
+
+  it('records response and parser diagnostics for invalid model output', async () => {
+    const log = makeLog()
+    const { authorize } = makeReviewer('not-json')
+
+    await expect(authorize(details(), log)).resolves.toEqual({ kind: 'escalate' })
+    expect(log.review).toHaveBeenCalledWith(
+      'auto_review.decision',
+      expect.objectContaining({
+        errorCategory: 'invalid-response',
+        failurePhase: 'response-parse',
+        errorMessage: expect.stringContaining('JSON'),
+        responsePreview: 'not-json',
+        responseBlockTypes: 'text',
+        attempts: 1,
+        stopReason: 'stop',
+      }),
+    )
+  })
 })

@@ -29,7 +29,14 @@ describe('persistent permission log', () => {
       durationMs: 42,
     })
     log.review('permission.escalated', { requestId: 'request-1', outcome: 'ESCALATE' })
-    log.debug('auto_review.failure', { requestId: 'request-1', errorCategory: 'provider-error' })
+    log.debug('auto_review.failure', {
+      requestId: 'request-1',
+      errorCategory: 'provider-error',
+      errorName: 'AuthError',
+      errorMessage: 'Authorization: Bearer secret-token was rejected',
+      failurePhase: 'provider-request',
+      attempts: 3,
+    })
 
     const lines = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
     expect(lines).toHaveLength(4)
@@ -48,7 +55,15 @@ describe('persistent permission log', () => {
     expect(lines[1]).not.toHaveProperty('riskLevel')
     expect(lines[1]).not.toHaveProperty('userAuthorization')
     expect(lines[2]).toMatchObject({ event: 'permission.escalated', outcome: 'ESCALATE' })
-    expect(lines[3]).toMatchObject({ event: 'auto_review.failure', errorCategory: 'provider-error' })
+    expect(lines[3]).toMatchObject({
+      event: 'auto_review.failure',
+      errorCategory: 'provider-error',
+      errorName: 'AuthError',
+      errorMessage: 'Authorization: Bearer [REDACTED] was rejected',
+      failurePhase: 'provider-request',
+      attempts: 3,
+    })
+    expect(JSON.stringify(lines[3])).not.toContain('secret-token')
     expect(statSync(path).mode & 0o777).toBe(0o600)
     expect(statSync(join(directory, 'runtime')).mode & 0o777).toBe(0o700)
   })

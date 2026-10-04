@@ -133,6 +133,9 @@ export function createJevReviewer(runtime: JevReviewerRuntime): ReviewAuthorizer
           policy: 'jev-review',
           outcome: 'ESCALATE',
           errorCategory: category,
+          errorName: error instanceof Error ? error.name : undefined,
+          errorMessage: message.slice(0, 300),
+          failurePhase: 'jev-request',
           durationMs: duration(),
         })
         log.debug('auto_review.failure', {
@@ -142,12 +145,14 @@ export function createJevReviewer(runtime: JevReviewerRuntime): ReviewAuthorizer
           policy: 'jev-review',
           outcome: 'ESCALATE',
           errorCategory: category,
+          errorName: error instanceof Error ? error.name : undefined,
+          errorMessage: message.slice(0, 300),
+          failurePhase: 'jev-request',
           durationMs: duration(),
         })
       } catch {
         // Logging must never change the permission decision.
       }
-      void message
       return { kind: 'escalate' }
     }
   }

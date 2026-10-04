@@ -41,6 +41,13 @@ export interface ReviewerDependencies {
 }
 
 interface Failure {
+  message?: string
+  name?: string
+  phase?: string
+  attempts?: number
+  responsePreview?: string
+  responseBlockTypes?: string
+  stopReason?: string
   category: FailureCategory
 }
 
@@ -175,6 +182,13 @@ function writeFailure(
     policy: 'model-review',
     outcome: 'ESCALATE',
     errorCategory: failure.category,
+    errorName: failure.name,
+    errorMessage: failure.message,
+    failurePhase: failure.phase,
+    attempts: failure.attempts,
+    responsePreview: failure.responsePreview,
+    responseBlockTypes: failure.responseBlockTypes,
+    stopReason: failure.stopReason,
     durationMs,
   }
   log.review(DECISION_EVENT, common)
@@ -228,22 +242,30 @@ async function runReview(
   try {
     const resolved = resolveReviewModel(runtime.registry, runtime.config)
     if (!resolved.ok) {
-      return { category: resolved.category }
+      return { category: resolved.category, phase: 'model-resolution' }
     }
 
     let auth
     try {
       auth = await raceWithSignal(runtime.registry.getApiKeyAndHeaders(resolved.value.model), signal)
-    } catch {
+    } catch (error) {
       if (signal.aborted) {
         return {
           category: timeoutController.signal.aborted ? 'timeout' : 'cancelled',
+          phase: 'auth-resolution',
+          name: error instanceof Error ? error.name : undefined,
+          message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
         }
       }
-      return { category: 'auth-unresolved' }
+      return {
+        category: 'auth-unresolved',
+        phase: 'auth-resolution',
+        name: error instanceof Error ? error.name : undefined,
+        message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      }
     }
     if (!auth.ok) {
-      return { category: 'auth-unresolved' }
+      return { category: 'auth-unresolved', phase: 'auth-resolution', message: 'credential provider returned ok=false' }
     }
 
     const transcript = renderTranscript(runtime.sessionManager.buildContextEntries())
@@ -264,24 +286,42 @@ async function runReview(
         )
 
         if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-          throw new Error(message.errorMessage ?? message.stopReason)
+          const error = new Error(message.errorMessage ?? message.stopReason)
+          error.name = `ProviderStop:${message.stopReason}`
+          throw error
         }
 
+        const text = responseText(message)
         try {
           return {
-            assessment: parseReviewAssessment(responseText(message)),
+            assessment: parseReviewAssessment(text),
           }
-        } catch {
-          return { category: 'invalid-response' }
+        } catch (error) {
+          return {
+            category: 'invalid-response',
+            phase: 'response-parse',
+            attempts: attempt,
+            name: error instanceof Error ? error.name : undefined,
+            message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+            responsePreview: text.slice(0, 500),
+            responseBlockTypes: message.content.map(block => block.type).join(','),
+            stopReason: message.stopReason,
+          }
         }
-      } catch {
+      } catch (error) {
         if (signal.aborted) {
           return {
             category: timeoutController.signal.aborted ? 'timeout' : 'cancelled',
           }
         }
         if (attempt >= dependencies.maxAttempts) {
-          return { category: 'provider-error' }
+          return {
+            category: 'provider-error',
+            phase: 'provider-request',
+            attempts: attempt,
+            name: error instanceof Error ? error.name : undefined,
+            message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+          }
         }
         const delay = dependencies.retryDelaysMs[attempt - 1] ?? dependencies.retryDelaysMs.at(-1) ?? 0
         try {
@@ -293,7 +333,7 @@ async function runReview(
         }
       }
     }
-    return { category: 'provider-error' }
+    return { category: 'provider-error', phase: 'provider-request', attempts: dependencies.maxAttempts }
   } finally {
     clearTimeout(timeout)
   }
