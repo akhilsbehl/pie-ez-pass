@@ -17,10 +17,10 @@ describe('personal default review policy', () => {
     expect(prompt).not.toContain('~/.richie')
     expect(prompt).not.toContain('permission-system authorizer')
     expect(prompt).not.toContain('{"kind":"defer"}')
-    expect(prompt).toContain("extension's local\nconfirmation UI")
+    expect(prompt.replace(/\s+/g, ' ')).toContain("extension's local confirmation UI")
     expect(prompt).toContain('source is exactly "user"')
-    expect(prompt).toContain('weighs strongly toward ACCEPT')
-    expect(prompt).toContain('does not erase an unmistakable severe footgun')
+    expect(prompt.replace(/\s+/g, ' ')).toContain('weighs strongly toward ACCEPT')
+    expect(prompt.replace(/\s+/g, ' ')).toContain('does not erase an unmistakable severe footgun')
     expect(prompt).not.toContain('medim')
   })
 

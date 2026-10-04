@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import permissionAutoReviewExtension from '../dist/pie-ez-pass.mjs'
 
 const CONFIRMATION_EVENT = 'pie-ez-pass:permission-confirmation:v1'
@@ -26,6 +29,22 @@ function loadPublicExtension() {
 }
 
 describe('public package permission-confirmation boundary', () => {
+  // Hermetic config: never read the developer's live config or call a real reviewer.
+  beforeEach(() => {
+    const agentDir = mkdtempSync(join(tmpdir(), 'ez-pass-public-'))
+    const configDir = join(agentDir, 'extensions', 'pie-ez-pass')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({ provider: 'no-such-provider', model: 'no-such-model', use_jev: false }),
+    )
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('brackets public-entrypoint confirmation with the exact request-scoped lifecycle event', async () => {
     const { context, handlers, pi } = loadPublicExtension()
     context.ui.confirm.mockImplementation(async () => {
