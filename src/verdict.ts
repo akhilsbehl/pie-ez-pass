@@ -1,8 +1,16 @@
 import { z } from 'zod'
 
+// No public model-independent tokenizer is available. Use ~4 UTF-8 bytes/token,
+// matching the requested 256-token budget conservatively for non-ASCII text.
+export const MAX_RATIONALE_TOKENS = 256
+export const MAX_RATIONALE_BYTES = MAX_RATIONALE_TOKENS * 4
+
 const assessmentPayloadSchema = z.strictObject({
   outcome: z.enum(['ACCEPT', 'ESCALATE']),
-  rationale: z.string().trim().min(1).max(4_000),
+  rationale: z.string().trim().min(1).refine(
+    value => Buffer.byteLength(value, 'utf8') <= MAX_RATIONALE_BYTES,
+    'rationale must fit the approximate 256-token limit (1024 UTF-8 bytes)',
+  ),
 })
 
 /** Thrown when the reply contains no JSON object at all (e.g. a prose answer). */

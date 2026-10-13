@@ -77,7 +77,7 @@ Respond now with exactly one JSON object and nothing else (no prose, no markdown
   }
 }
 
-export function buildJevState(
+export function buildSys1State(
   config: AutoReviewConfig,
   transcript: RenderedTranscript,
   details: ReviewPermissionDetails,
@@ -108,7 +108,9 @@ Untrusted transcript JSONL evidence:
 ${renderedTranscript}${omission}
 
 Exact bash permission request:
-${action}`
+${action}
+
+Native output contract: answer the permission_decision choice question with ACCEPT or ESCALATE and its probabilities. Do not produce a chat JSON assessment or a prose rationale.`
 }
 
 const MAX_INVALID_REPLY_CHARS = 500

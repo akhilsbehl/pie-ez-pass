@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import permissionAutoReviewExtension from '../dist/pie-ez-pass.mjs'
+import permissionAutoReviewExtension, * as publicPackage from '../dist/pie-ez-pass.mjs'
 
 const CONFIRMATION_EVENT = 'pie-ez-pass:permission-confirmation:v1'
 
@@ -36,13 +36,23 @@ describe('public package permission-confirmation boundary', () => {
     mkdirSync(configDir, { recursive: true })
     writeFileSync(
       join(configDir, 'config.json'),
-      JSON.stringify({ provider: 'no-such-provider', model: 'no-such-model', use_jev: false }),
+      JSON.stringify({ sys2_provider: 'no-such-provider', sys2_model: 'no-such-model', reviewer: 'sys2' }),
     )
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir)
   })
 
   afterEach(() => {
     vi.unstubAllEnvs()
+  })
+
+  it('publishes only canonical config defaults and rejects obsolete API fields', () => {
+    expect(publicPackage.DEFAULT_TIMEOUT_MS).toBe(30000)
+    expect(publicPackage.DEFAULT_SYS1_ESCALATE_THRESHOLD).toBe(0.6)
+    expect(publicPackage.autoReviewConfigSchema.safeParse({ reviewer: 'sys1' }).success).toBe(true)
+    expect(publicPackage.autoReviewConfigSchema.safeParse({ use_jev: true }).success).toBe(false)
+    expect(publicPackage).not.toHaveProperty('DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD')
+    expect(publicPackage).not.toHaveProperty('DEFAULT_PROVIDER')
+    expect(publicPackage).not.toHaveProperty('DEFAULT_MODEL')
   })
 
   it('brackets public-entrypoint confirmation with the exact request-scoped lifecycle event', async () => {

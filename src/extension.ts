@@ -11,8 +11,8 @@ import type { AutoReviewActivationResult } from './command.js'
 import type { AutoReviewConfig, LoadConfigResult } from './config.js'
 import { registerAutoReviewCommand } from './command.js'
 import { AutoReviewConfigStore } from './config-store.js'
-import { createJevReviewer } from './jev-reviewer.js'
-import { createPermissionReviewer } from './reviewer.js'
+import { createSys1Reviewer } from './sys1-reviewer.js'
+import { createSys2Reviewer } from './sys2-reviewer.js'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
 import { decidePermanentRule } from './permission-rules.js'
 import { createPermissionLog } from './permission-log.js'
@@ -119,15 +119,9 @@ function installAutoReviewExtension(
   const createReviewer =
     dependencies.createReviewer ??
     ((options: ReviewerFactoryOptions) =>
-      options.config.use_jev
-        ? createJevReviewer({
-            config: options.config,
-            sessionManager: options.sessionManager,
-            sessionSignal: options.sessionSignal,
-          })
-        : createPermissionReviewer({
-            ...options,
-          }))
+      options.config.reviewer === 'sys1'
+        ? createSys1Reviewer(options)
+        : createSys2Reviewer(options))
   const configuredReviewLog = dependencies.reviewLog ?? createPermissionLog()
   let sessionId = randomUUID()
   const reviewLog: ReviewLog = {
@@ -378,7 +372,6 @@ function installAutoReviewExtension(
 
   registerAutoReviewCommand(pi, {
     configStore,
-    getActiveConfig: () => generation?.config,
     applyConfig,
   })
 }

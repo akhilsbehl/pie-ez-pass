@@ -3,10 +3,10 @@ import { defineConfig } from 'tsdown'
 export default defineConfig({
   entry: 'src/index.ts',
   deps: {
-    alwaysBundle: ['zod', 'pie-jev'],
-    onlyBundle: ['zod', 'pie-jev'],
+    alwaysBundle: ['zod'],
+    onlyBundle: ['zod'],
     dts: {
-      neverBundle: ['zod', 'pie-jev'],
+      neverBundle: ['zod'],
     },
   },
 })

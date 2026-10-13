@@ -23,6 +23,10 @@ describe('persistent permission log', () => {
       requestId: 'request-1',
       toolName: 'bash',
       outcome: 'ESCALATE',
+      reviewer: 'sys1',
+      policy: 'sys1',
+      provider: 'test',
+      model: 'classify',
       riskLevel: 'legacy-must-not-persist',
       userAuthorization: 'legacy-must-not-persist',
       rationale: 'The command uses a bearer token=secret-token.',
@@ -50,6 +54,10 @@ describe('persistent permission log', () => {
       event: 'auto_review.decision',
       outcome: 'ESCALATE',
       rationale: 'The command uses a Bearer [REDACTED]',
+      reviewer: 'sys1',
+      policy: 'sys1',
+      provider: 'test',
+      model: 'classify',
       durationMs: 42,
     })
     expect(lines[1]).not.toHaveProperty('riskLevel')

@@ -1,15 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createPermissionReviewer } from './reviewer.js'
+import { createSys2Reviewer } from './sys2-reviewer.js'
+import { testConfig } from './reviewer-test-fixtures.js'
 import type { ReviewLog, ReviewPermissionDetails } from './review-types.js'
 
-const config = {
-  provider: 'test',
-  model: 'review',
-  reasoning: 'off' as const,
-  timeoutMs: 1_000,
-  use_jev: false,
-  jev_escalate_confidence_threshold: 0.6,
-}
+const config = testConfig()
 
 const details = (): ReviewPermissionDetails => ({
   requestId: 'request-1',
@@ -44,12 +38,11 @@ function makeReviewer(response: string | string[], providerError = false) {
   }
   const model = { provider: 'test', id: 'review', api: 'test', reasoning: false, input: ['text'] }
   const registry = {
-    getProvider: () => provider,
-    find: () => model,
-    getAll: () => [model],
-    getApiKeyAndHeaders: async () => ({ ok: true, apiKey: 'test' }),
+    streamSimple: provider.streamSimple,
+    getModelsOfType: () => [model],
+    getAvailableOfType: async () => [model],
   }
-  const authorize = createPermissionReviewer({
+  const authorize = createSys2Reviewer({
     config,
     registry: registry as never,
     sessionManager: { buildContextEntries: () => [] },

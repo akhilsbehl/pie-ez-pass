@@ -4,12 +4,14 @@ import { buildSystemPrompt } from './policy.js'
 describe('personal default review policy', () => {
   it('uses concise reviewer semantics without implementation details', () => {
     const prompt = buildSystemPrompt({
-      provider: 'openai-codex',
-      model: 'codex-auto-review',
-      reasoning: 'low',
+      sys1_provider: 'test',
+      sys1_model: 'classify',
+      sys2_provider: 'openai-codex',
+      sys2_model: 'codex-auto-review',
+      sys2_reasoning: 'low',
       timeoutMs: 90_000,
-      use_jev: true,
-      jev_escalate_confidence_threshold: 0.6,
+      reviewer: 'sys1',
+      sys1_escalate_threshold: 0.6,
     })
 
     expect(prompt).toContain('\"outcome\": \"ACCEPT\" | \"ESCALATE\"')
@@ -26,12 +28,14 @@ describe('personal default review policy', () => {
 
   it('retains optional additional policy support', () => {
     const prompt = buildSystemPrompt({
-      provider: 'openai-codex',
-      model: 'codex-auto-review',
-      reasoning: 'low',
+      sys1_provider: 'test',
+      sys1_model: 'classify',
+      sys2_provider: 'openai-codex',
+      sys2_model: 'codex-auto-review',
+      sys2_reasoning: 'low',
       timeoutMs: 90_000,
-      use_jev: true,
-      jev_escalate_confidence_threshold: 0.6,
+      reviewer: 'sys1',
+      sys1_escalate_threshold: 0.6,
       additionalPolicy: 'Prefer explicit confirmation for this test action.',
     })
 

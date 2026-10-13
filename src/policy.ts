@@ -31,13 +31,14 @@ ESCALATE means: request a human decision for the exact unchanged action through
 the extension's local confirmation UI. The human decision is final.
 `
 
-export const LEGACY_OUTPUT_CONTRACT = `
+export const SYS2_OUTPUT_CONTRACT = `
 Return exactly one JSON object and no prose outside it:
 {"outcome": "ACCEPT" | "ESCALATE", "rationale": string}
+Keep the rationale to one short sentence, at most 256 tokens (approximately 1024 UTF-8 bytes).
 `
 
 export function buildSystemPrompt(config: AutoReviewConfig): string {
-  const base = `${SHARED_POLICY_CORE}\n${LEGACY_OUTPUT_CONTRACT}\n`
+  const base = `${SHARED_POLICY_CORE}\n${SYS2_OUTPUT_CONTRACT}\n`
   if (config.additionalPolicy === undefined) return base
   return `${base}\n\n## Additional guidelines\n\n${config.additionalPolicy}`
 }

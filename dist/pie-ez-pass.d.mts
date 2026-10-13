@@ -2,17 +2,27 @@ import { ExtensionAPI, ModelRegistry, SessionManager } from "@earendil-works/pi-
 import { z } from "zod";
 //#region src/config.d.ts
 declare const EXTENSION_ID = "pie-ez-pass";
-declare const DEFAULT_PROVIDER = "openai-codex";
-declare const DEFAULT_MODEL = "codex-auto-review";
-declare const DEFAULT_TIMEOUT_MS = 90000;
-declare const DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD = 0.6;
+type ReviewPath = 'sys1' | 'sys2';
+declare const DEFAULT_SYS1_PROVIDER = "openrouter";
+declare const DEFAULT_SYS1_MODEL = "typesafe/jev-1.13";
+declare const DEFAULT_SYS2_PROVIDER = "openai-codex";
+declare const DEFAULT_SYS2_MODEL = "codex-auto-review";
+declare const DEFAULT_TIMEOUT_MS = 30000;
+declare const DEFAULT_SYS1_ESCALATE_THRESHOLD = 0.6;
 declare const CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json";
+declare const REASONING_LEVELS: readonly ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 declare const autoReviewConfigSchema: z.ZodObject<{
   $schema: z.ZodOptional<z.ZodString>;
   additionalPolicy: z.ZodOptional<z.ZodString>;
-  provider: z.ZodDefault<z.ZodString>;
-  model: z.ZodDefault<z.ZodString>;
-  reasoning: z.ZodDefault<z.ZodEnum<{
+  reviewer: z.ZodEnum<{
+    sys1: "sys1";
+    sys2: "sys2";
+  }>;
+  sys1_provider: z.ZodDefault<z.ZodString>;
+  sys1_model: z.ZodDefault<z.ZodString>;
+  sys2_provider: z.ZodDefault<z.ZodString>;
+  sys2_model: z.ZodDefault<z.ZodString>;
+  sys2_reasoning: z.ZodDefault<z.ZodEnum<{
     high: "high";
     low: "low";
     max: "max";
@@ -22,8 +32,7 @@ declare const autoReviewConfigSchema: z.ZodObject<{
     xhigh: "xhigh";
   }>>;
   timeoutMs: z.ZodDefault<z.ZodNumber>;
-  use_jev: z.ZodBoolean;
-  jev_escalate_confidence_threshold: z.ZodDefault<z.ZodNumber>;
+  sys1_escalate_threshold: z.ZodDefault<z.ZodNumber>;
   rules: z.ZodDefault<z.ZodObject<{
     allow: z.ZodDefault<z.ZodObject<{
       commands: z.ZodDefault<z.ZodArray<z.ZodString>>;
@@ -39,6 +48,28 @@ type ParsedAutoReviewConfig = z.infer<typeof autoReviewConfigSchema>;
 type AutoReviewConfig = Omit<ParsedAutoReviewConfig, 'rules'> & {
   rules?: ParsedAutoReviewConfig['rules'];
 };
+interface AutoReviewConfigFile {
+  $schema?: string | undefined;
+  reviewer?: ReviewPath | undefined;
+  sys1_provider?: string | undefined;
+  sys1_model?: string | undefined;
+  sys2_provider?: string | undefined;
+  sys2_model?: string | undefined;
+  sys2_reasoning?: (typeof REASONING_LEVELS)[number] | undefined;
+  timeoutMs?: number | undefined;
+  additionalPolicy?: string | undefined;
+  sys1_escalate_threshold?: number | undefined;
+  rules?: {
+    allow: {
+      commands: string[];
+      paths: string[];
+    };
+    block: {
+      commands: string[];
+      paths: string[];
+    };
+  } | undefined;
+}
 interface ConfigIssue {
   sourcePath: string;
   message: string;
@@ -105,4 +136,4 @@ declare function createAutoReviewExtension(pi: ExtensionAPI, dependencies?: Auto
 //#region src/index.d.ts
 declare function permissionAutoReviewExtension(pi: ExtensionAPI): void;
 //#endregion
-export { type AutoReviewConfig, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD, DEFAULT_MODEL, DEFAULT_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };
+export { type AutoReviewConfig, type AutoReviewConfigFile, type AutoReviewExtensionDependencies, CONFIG_SCHEMA_URL, type ConfigIssue, DEFAULT_SYS1_ESCALATE_THRESHOLD, DEFAULT_SYS1_MODEL, DEFAULT_SYS1_PROVIDER, DEFAULT_SYS2_MODEL, DEFAULT_SYS2_PROVIDER, DEFAULT_TIMEOUT_MS, EXTENSION_ID, type LoadConfigOptions, type LoadConfigResult, type ReviewPath, autoReviewConfigSchema, buildAutoReviewJsonSchema, createAutoReviewExtension, permissionAutoReviewExtension as default, loadAutoReviewConfig };

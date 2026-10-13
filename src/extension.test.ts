@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { ReviewLog } from './review-types.js'
 import { DEFAULT_RULES } from './config.js'
+import { fakeRegistry, testConfig } from './reviewer-test-fixtures.js'
 import { createAutoReviewExtension } from './extension.js'
 
 const TEST_RULES = {
@@ -26,12 +27,14 @@ function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?:
         options.valid === false
           ? undefined
           : {
-              provider: 'test',
-              model: 'review',
-              reasoning: 'off',
+              sys1_provider: 'test',
+              sys1_model: 'classify',
+              sys2_provider: 'test',
+              sys2_model: 'review',
+              sys2_reasoning: 'off',
               timeoutMs: 1000,
-              use_jev: false,
-              jev_escalate_confidence_threshold: 0.6,
+              reviewer: 'sys2',
+              sys1_escalate_threshold: 0.6,
               rules: options.rules ?? TEST_RULES,
             },
       issues: [],
@@ -46,6 +49,41 @@ function setup(kind: 'accept' | 'escalate', options: { valid?: boolean; throws?:
   return { handlers, reviewer, reviewLog, context, pi }
 }
 const call = { type: 'tool_call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'touch /important' } }
+
+describe.each(['sys1', 'sys2'] as const)('real %s routing with fake native models', path => {
+  function nativeSetup() {
+    const handlers = new Map<string, (...args: any[]) => any>()
+    const pi = { on: (event: string, handler: (...args: any[]) => any) => handlers.set(event, handler), registerCommand: vi.fn(), events: { emit: vi.fn() } }
+    const { registry, mocks } = fakeRegistry()
+    const config = testConfig(path, { rules: { allow: { commands: ['safe'], paths: [] }, block: { commands: ['blocked'], paths: [] } } })
+    const loadConfig = vi.fn(() => ({ config, issues: [], globalPath: '', projectPath: '' }))
+    createAutoReviewExtension(pi as never, { loadConfig, reviewLog: { review: vi.fn(), debug: vi.fn() } })
+    const context = { cwd: '/work/repo', modelRegistry: registry, sessionManager: { buildContextEntries: () => [] }, hasUI: true, ui: { confirm: vi.fn(async () => true) } }
+    handlers.get('session_start')?.({}, context)
+    return { handlers, mocks, loadConfig, context, pi }
+  }
+  it('edit/write and permanent rules bypass both native reviewers even with unavailable auth', async () => {
+    const { handlers, mocks, context } = nativeSetup()
+    mocks.getAvailableOfType.mockResolvedValue([])
+    for (const toolName of ['edit', 'write']) {
+      expect(await handlers.get('tool_call')?.({ ...call, toolName, input: { path: '/unmatched/file' } }, context)).toEqual({})
+    }
+    expect(context.ui.confirm).toHaveBeenCalledTimes(2)
+    expect(await handlers.get('tool_call')?.({ ...call, input: { command: 'safe' } }, context)).toEqual({})
+    expect(await handlers.get('tool_call')?.({ ...call, input: { command: 'blocked' } }, context)).toMatchObject({ block: true })
+    expect(mocks.classify).not.toHaveBeenCalled(); expect(mocks.streamSimple).not.toHaveBeenCalled()
+    expect(mocks.getAvailableOfType).not.toHaveBeenCalled()
+  })
+  it('dispatches unmatched Bash only to the selected path; switching preserves the two pairs', async () => {
+    const { handlers, mocks, loadConfig, context } = nativeSetup()
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
+    expect(path === 'sys1' ? mocks.classify : mocks.streamSimple).toHaveBeenCalledOnce()
+    loadConfig.mockReturnValue({ config: testConfig(path === 'sys1' ? 'sys2' : 'sys1'), issues: [], globalPath: '', projectPath: '' })
+    expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
+    expect(mocks.classify).toHaveBeenCalledOnce(); expect(mocks.streamSimple).toHaveBeenCalledOnce()
+    expect(context.ui.confirm).not.toHaveBeenCalled()
+  })
+})
 
 describe('tool_call permission boundary', () => {
   it.each(['edit', 'write'] as const)('accepts %s targets in session CWD without review', async toolName => {
@@ -274,15 +312,17 @@ describe('tool_call permission boundary', () => {
       events: { emit: vi.fn(), on: vi.fn() },
     }
     const base = {
-      provider: 'test',
-      model: 'review',
-      reasoning: 'off' as const,
+      sys1_provider: 'test',
+      sys1_model: 'classify',
+      sys2_provider: 'test',
+      sys2_model: 'review',
+      sys2_reasoning: 'off' as const,
       timeoutMs: 1000,
-      jev_escalate_confidence_threshold: 0.6,
+      sys1_escalate_threshold: 0.6,
       rules: TEST_RULES,
     }
-    const first = { ...base, use_jev: false }
-    const second = { ...base, use_jev: true }
+    const first = { ...base, reviewer: 'sys2' }
+    const second = { ...base, reviewer: 'sys1' }
     const loadConfig = vi.fn(() => ({ config: first, issues: [], globalPath: '', projectPath: '' }))
     const reviewer = vi.fn(async () => ({ kind: 'accept' }))
     const createReviewer = vi.fn(() => reviewer)
@@ -307,12 +347,14 @@ describe('tool_call permission boundary', () => {
     }
     const loadConfig = vi.fn(() => ({
       config: {
-        provider: 'test',
-        model: 'review',
-        reasoning: 'off' as const,
+        sys1_provider: 'test',
+        sys1_model: 'classify',
+        sys2_provider: 'test',
+        sys2_model: 'review',
+        sys2_reasoning: 'off' as const,
         timeoutMs: 1000,
-        use_jev: false,
-        jev_escalate_confidence_threshold: 0.6,
+        reviewer: 'sys2',
+        sys1_escalate_threshold: 0.6,
         rules: TEST_RULES,
       },
       issues: [],
@@ -325,7 +367,7 @@ describe('tool_call permission boundary', () => {
     const context = { cwd: '/workspace/project', modelRegistry: {}, sessionManager: { buildContextEntries: () => [] }, hasUI: false, ui: { confirm: vi.fn(async () => true) } }
     handlers.get('session_start')?.({}, context)
     expect(await handlers.get('tool_call')?.(call, context)).toEqual({})
-    loadConfig.mockReturnValue({ config: undefined, issues: [{ sourcePath: '', message: 'use_jev: required' }], globalPath: '', projectPath: '' } as never)
+    loadConfig.mockReturnValue({ config: undefined, issues: [{ sourcePath: '', message: 'reviewer: required' }], globalPath: '', projectPath: '' } as never)
     expect(await handlers.get('tool_call')?.(call, context)).toMatchObject({ block: true })
     expect(reviewer).toHaveBeenCalledTimes(1)
   })

@@ -5,10 +5,13 @@ import process from 'node:process'
 import { z } from 'zod'
 
 export const EXTENSION_ID = 'pie-ez-pass'
-export const DEFAULT_PROVIDER = 'openai-codex'
-export const DEFAULT_MODEL = 'codex-auto-review'
-export const DEFAULT_TIMEOUT_MS = 90_000
-export const DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD = 0.6
+export type ReviewPath = 'sys1' | 'sys2'
+export const DEFAULT_SYS1_PROVIDER = 'openrouter'
+export const DEFAULT_SYS1_MODEL = 'typesafe/jev-1.13'
+export const DEFAULT_SYS2_PROVIDER = 'openai-codex'
+export const DEFAULT_SYS2_MODEL = 'codex-auto-review'
+export const DEFAULT_TIMEOUT_MS = 30_000
+export const DEFAULT_SYS1_ESCALATE_THRESHOLD = 0.6
 export const CONFIG_SCHEMA_URL =
   'https://raw.githubusercontent.com/akhilsbehl/pie-ez-pass/refs/heads/master/schemas/config.schema.json'
 
@@ -28,13 +31,15 @@ const rulesSchema = z.strictObject({
 
 const configFileShape = {
   $schema: z.string().min(1).optional(),
-  provider: z.string().trim().min(1).optional(),
-  model: z.string().trim().min(1).optional(),
-  reasoning: z.enum(REASONING_LEVELS).optional(),
+  reviewer: z.enum(['sys1', 'sys2']).optional(),
+  sys1_provider: z.string().trim().min(1).optional(),
+  sys1_model: z.string().trim().min(1).optional(),
+  sys2_provider: z.string().trim().min(1).optional(),
+  sys2_model: z.string().trim().min(1).optional(),
+  sys2_reasoning: z.enum(REASONING_LEVELS).optional(),
   timeoutMs: z.number().int().positive().max(300_000).optional(),
   additionalPolicy: z.string().trim().min(1).optional(),
-  use_jev: z.boolean().optional(),
-  jev_escalate_confidence_threshold: z.number().min(0).max(1).optional(),
+  sys1_escalate_threshold: z.number().min(0).max(1).optional(),
 }
 
 const autoReviewConfigFileSchema = z.strictObject({ ...configFileShape, rules: rulesSchema.optional() })
@@ -43,12 +48,14 @@ const projectConfigFileSchema = z.strictObject(configFileShape)
 export const autoReviewConfigSchema = z
   .strictObject({
     ...configFileShape,
-    provider: z.string().trim().min(1).default(DEFAULT_PROVIDER),
-    model: z.string().trim().min(1).default(DEFAULT_MODEL),
-    reasoning: z.enum(REASONING_LEVELS).default('low'),
+    reviewer: z.enum(['sys1', 'sys2']),
+    sys1_provider: z.string().trim().min(1).default(DEFAULT_SYS1_PROVIDER),
+    sys1_model: z.string().trim().min(1).default(DEFAULT_SYS1_MODEL),
+    sys2_provider: z.string().trim().min(1).default(DEFAULT_SYS2_PROVIDER),
+    sys2_model: z.string().trim().min(1).default(DEFAULT_SYS2_MODEL),
+    sys2_reasoning: z.enum(REASONING_LEVELS).default('low'),
     timeoutMs: z.number().int().positive().max(300_000).default(DEFAULT_TIMEOUT_MS),
-    use_jev: z.boolean(),
-    jev_escalate_confidence_threshold: z.number().min(0).max(1).default(DEFAULT_JEV_ESCALATE_CONFIDENCE_THRESHOLD),
+    sys1_escalate_threshold: z.number().min(0).max(1).default(DEFAULT_SYS1_ESCALATE_THRESHOLD),
     rules: rulesSchema.default(() => structuredClone(DEFAULT_RULES)),
   })
 
@@ -57,13 +64,15 @@ export type AutoReviewConfig = Omit<ParsedAutoReviewConfig, 'rules'> & { rules?:
 
 export interface AutoReviewConfigFile {
   $schema?: string | undefined
-  provider?: string | undefined
-  model?: string | undefined
-  reasoning?: (typeof REASONING_LEVELS)[number] | undefined
+  reviewer?: ReviewPath | undefined
+  sys1_provider?: string | undefined
+  sys1_model?: string | undefined
+  sys2_provider?: string | undefined
+  sys2_model?: string | undefined
+  sys2_reasoning?: (typeof REASONING_LEVELS)[number] | undefined
   timeoutMs?: number | undefined
   additionalPolicy?: string | undefined
-  use_jev?: boolean | undefined
-  jev_escalate_confidence_threshold?: number | undefined
+  sys1_escalate_threshold?: number | undefined
   rules?: { allow: { commands: string[]; paths: string[] }; block: { commands: string[]; paths: string[] } } | undefined
 }
 

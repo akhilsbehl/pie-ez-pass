@@ -7,17 +7,34 @@
       "type": "string",
       "minLength": 1
     },
-    "provider": {
+    "reviewer": {
+      "type": "string",
+      "enum": [
+        "sys1",
+        "sys2"
+      ]
+    },
+    "sys1_provider": {
+      "default": "openrouter",
+      "type": "string",
+      "minLength": 1
+    },
+    "sys1_model": {
+      "default": "typesafe/jev-1.13",
+      "type": "string",
+      "minLength": 1
+    },
+    "sys2_provider": {
       "default": "openai-codex",
       "type": "string",
       "minLength": 1
     },
-    "model": {
+    "sys2_model": {
       "default": "codex-auto-review",
       "type": "string",
       "minLength": 1
     },
-    "reasoning": {
+    "sys2_reasoning": {
       "default": "low",
       "type": "string",
       "enum": [
@@ -31,7 +48,7 @@
       ]
     },
     "timeoutMs": {
-      "default": 90000,
+      "default": 30000,
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 300000
@@ -40,10 +57,7 @@
       "type": "string",
       "minLength": 1
     },
-    "use_jev": {
-      "type": "boolean"
-    },
-    "jev_escalate_confidence_threshold": {
+    "sys1_escalate_threshold": {
       "default": 0.6,
       "type": "number",
       "minimum": 0,
@@ -119,7 +133,7 @@
     }
   },
   "required": [
-    "use_jev"
+    "reviewer"
   ],
   "additionalProperties": false
 }

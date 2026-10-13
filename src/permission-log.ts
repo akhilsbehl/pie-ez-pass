@@ -20,6 +20,7 @@ export interface PermissionLogRecord {
   operation?: string
   requestSummary?: string
   policy?: string
+  reviewer?: string
   outcome?: string
   humanDecision?: string
   rationale?: string
@@ -80,6 +81,7 @@ export function createPermissionLog(filePath = PERMISSION_LOG_PATH): ReviewLog {
       'toolName',
       'operation',
       'policy',
+      'reviewer',
       'outcome',
       'humanDecision',
       'provider',

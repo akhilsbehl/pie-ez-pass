@@ -1,18 +1,16 @@
 import type { AutoReviewConfig } from './config.js'
 import type { ReviewModelRegistry } from './model.js'
 import type { ReviewAssessment } from './verdict.js'
-import type { AssistantMessage, Provider, SimpleStreamOptions } from '@earendil-works/pi-ai'
+import type { AssistantMessage, Model, Api, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import type { SessionManager } from '@earendil-works/pi-coding-agent'
 import type { ReviewAuthorizer, ReviewLog, ReviewPermissionDetails } from './review-types.js'
-import { resolveReviewModel } from './model.js'
+import { configuredModel, resolveSys2Model, availableReviewModels, sameModel } from './model.js'
+import { createReviewDeadline, raceWithSignal, reviewSleep, REVIEW_MAX_ATTEMPTS, REVIEW_RETRY_DELAYS_MS } from './review-deadline.js'
 import { buildRetryUserPrompt, buildReviewPrompt } from './prompt.js'
 import { renderTranscript } from './transcript.js'
 import { NoJsonObjectError, parseReviewAssessment } from './verdict.js'
 
-const DEFAULT_MAX_ATTEMPTS = 3
-const DEFAULT_RETRY_DELAYS_MS = [250, 1_000]
-const MAX_OUTPUT_TOKENS = 1_000
-const MAX_DISPLAY_RATIONALE_LENGTH = 600
+const MAX_OUTPUT_TOKENS = 256
 const DECISION_EVENT = 'auto_review.decision'
 const FAILURE_EVENT = 'auto_review.failure'
 
@@ -56,53 +54,6 @@ interface ReviewCallResult {
   attempts: number
 }
 
-function abortError(): Error {
-  const error = new Error('operation aborted')
-  error.name = 'AbortError'
-  return error
-}
-
-async function defaultSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (milliseconds <= 0) {
-    return Promise.resolve()
-  }
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(abortError())
-      return
-    }
-    const timer = setTimeout(resolve, milliseconds)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        reject(abortError())
-      },
-      { once: true },
-    )
-  })
-}
-
-async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    return Promise.reject(abortError())
-  }
-  return new Promise((resolve, reject) => {
-    const onAbort = (): void => reject(abortError())
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(
-      value => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(value)
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      },
-    )
-  })
-}
-
 function responseText(message: AssistantMessage): string {
   return message.content
     .filter((block): block is Extract<(typeof message.content)[number], { type: 'text' }> => block.type === 'text')
@@ -111,60 +62,20 @@ function responseText(message: AssistantMessage): string {
     .trim()
 }
 
-function buildStreamOptions(
-  runtime: ReviewerRuntime,
-  signal: AbortSignal,
-  timeoutMs: number,
-  auth: {
-    apiKey?: string
-    headers?: Record<string, string>
-    env?: Record<string, string>
-  },
-  reasoning: boolean,
-): SimpleStreamOptions {
-  const options: SimpleStreamOptions = {
-    maxRetries: 0,
-    maxTokens: MAX_OUTPUT_TOKENS,
-    signal,
-    timeoutMs,
+function buildStreamOptions(runtime: ReviewerRuntime, signal: AbortSignal, timeoutMs: number, reasoning: boolean): SimpleStreamOptions {
+  return {
+    maxRetries: 0, maxTokens: MAX_OUTPUT_TOKENS, signal, timeoutMs,
+    ...(reasoning && runtime.config.sys2_reasoning !== 'off' ? { reasoning: runtime.config.sys2_reasoning } : {}),
   }
-  if (auth.apiKey !== undefined) {
-    options.apiKey = auth.apiKey
-  }
-  if (auth.headers !== undefined) {
-    options.headers = auth.headers
-  }
-  if (auth.env !== undefined) {
-    options.env = auth.env
-  }
-  if (reasoning && runtime.config.reasoning !== 'off') {
-    options.reasoning = runtime.config.reasoning
-  }
-  return options
 }
 
 async function callProvider(
-  provider: Provider,
-  model: Parameters<Provider['streamSimple']>[0],
-  systemPrompt: string,
-  userPrompt: string,
-  options: SimpleStreamOptions,
+  registry: ReviewModelRegistry, model: Model<Api>, systemPrompt: string, userPrompt: string, options: SimpleStreamOptions,
 ): Promise<AssistantMessage> {
-  const stream = provider.streamSimple(
-    model,
-    {
-      systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-          timestamp: Date.now(),
-        },
-      ],
-    },
-    options,
-  )
-  return stream.result()
+  return registry.streamSimple(model, {
+    systemPrompt,
+    messages: [{ role: 'user', content: userPrompt, timestamp: Date.now() }],
+  }, options).result()
 }
 
 function writeFailure(
@@ -178,9 +89,9 @@ function writeFailure(
     requestId: details.requestId,
     toolCallId: details.toolCallId,
     toolName: details.toolName,
-    provider: runtime.config.provider,
-    model: runtime.config.model,
-    policy: 'model-review',
+    provider: runtime.config.sys2_provider,
+    model: runtime.config.sys2_model,
+    policy: 'sys2', reviewer: 'sys2',
     outcome: 'ESCALATE',
     errorCategory: failure.category,
     errorName: failure.name,
@@ -241,9 +152,7 @@ function annotatePermissionPrompt(
   details: ReviewPermissionDetails,
   assessment: ReviewAssessment,
 ): void {
-  const rationale = assessment.rationale.slice(0, MAX_DISPLAY_RATIONALE_LENGTH)
-  const suffix = assessment.rationale.length > MAX_DISPLAY_RATIONALE_LENGTH ? '…' : ''
-  details.message = `${details.message}\n\n[Automatic review — advisory]\nRationale: ${rationale}${suffix}`
+  details.message = `${details.message}\n\n[Automatic review — advisory]\nRationale: ${assessment.rationale}`
 }
 
 async function runReview(
@@ -252,42 +161,10 @@ async function runReview(
   dependencies: Required<Pick<ReviewerDependencies, 'now' | 'sleep' | 'maxAttempts' | 'retryDelaysMs'>>,
 ): Promise<ReviewCallResult | Failure> {
   const startedAt = dependencies.now()
-  const timeoutController = new AbortController()
-  const timeout = setTimeout(() => timeoutController.abort(), runtime.config.timeoutMs)
-  const signal =
-    runtime.sessionSignal === undefined
-      ? timeoutController.signal
-      : AbortSignal.any([timeoutController.signal, runtime.sessionSignal])
+  const deadline = createReviewDeadline(runtime.config.timeoutMs, runtime.sessionSignal)
+  const { signal } = deadline
 
   try {
-    const resolved = resolveReviewModel(runtime.registry, runtime.config)
-    if (!resolved.ok) {
-      return { category: resolved.category, phase: 'model-resolution' }
-    }
-
-    let auth
-    try {
-      auth = await raceWithSignal(runtime.registry.getApiKeyAndHeaders(resolved.value.model), signal)
-    } catch (error) {
-      if (signal.aborted) {
-        return {
-          category: timeoutController.signal.aborted ? 'timeout' : 'cancelled',
-          phase: 'auth-resolution',
-          name: error instanceof Error ? error.name : undefined,
-          message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-        }
-      }
-      return {
-        category: 'auth-unresolved',
-        phase: 'auth-resolution',
-        name: error instanceof Error ? error.name : undefined,
-        message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-      }
-    }
-    if (!auth.ok) {
-      return { category: 'auth-unresolved', phase: 'auth-resolution', message: 'credential provider returned ok=false' }
-    }
-
     const transcript = renderTranscript(runtime.sessionManager.buildContextEntries())
     const prompt = buildReviewPrompt(runtime.config, transcript, details)
 
@@ -295,14 +172,25 @@ async function runReview(
 
     for (let attempt = 1; attempt <= dependencies.maxAttempts; attempt += 1) {
       try {
+        if (signal.aborted) throw new Error('review cancelled')
+        const identity = configuredModel(runtime.config, 'sys2')
+        const model = resolveSys2Model(runtime.registry, identity)
+        if (model === undefined) return { category: 'model-unresolved', phase: 'model-resolution', attempts: attempt }
+        const available = await raceWithSignal(availableReviewModels(runtime.registry, 'sys2', signal, identity.provider), signal)
+        if (!available.some(entry => sameModel(entry, identity))) {
+          return { category: 'auth-unresolved', phase: 'model-availability', attempts: attempt }
+        }
+        if (signal.aborted || dependencies.now() - startedAt >= runtime.config.timeoutMs) {
+          return { category: deadline.timedOut() || !signal.aborted ? 'timeout' : 'cancelled', attempts: attempt }
+        }
         const remainingMs = Math.max(1, runtime.config.timeoutMs - (dependencies.now() - startedAt))
         const message = await raceWithSignal(
           callProvider(
-            resolved.value.provider,
-            resolved.value.model,
+            runtime.registry,
+            model,
             prompt.systemPrompt,
             userPrompt,
-            buildStreamOptions(runtime, signal, remainingMs, auth, resolved.value.model.reasoning),
+            buildStreamOptions(runtime, signal, remainingMs, model.reasoning),
           ),
           signal,
         )
@@ -315,10 +203,11 @@ async function runReview(
 
         const text = responseText(message)
         try {
-          return {
-            assessment: parseReviewAssessment(text),
-            attempts: attempt,
+          const assessment = parseReviewAssessment(text)
+          if (signal.aborted || dependencies.now() - startedAt >= runtime.config.timeoutMs) {
+            return { category: deadline.timedOut() || !signal.aborted ? 'timeout' : 'cancelled', attempts: attempt }
           }
+          return { assessment, attempts: attempt }
         } catch (error) {
           // Retry with targeted feedback: quote the rejected reply and say what the parser objected to.
           if (attempt < dependencies.maxAttempts) {
@@ -339,7 +228,7 @@ async function runReview(
       } catch (error) {
         if (signal.aborted) {
           return {
-            category: timeoutController.signal.aborted ? 'timeout' : 'cancelled',
+            category: deadline.timedOut() ? 'timeout' : 'cancelled',
           }
         }
         if (attempt >= dependencies.maxAttempts) {
@@ -353,29 +242,29 @@ async function runReview(
         }
         const delay = dependencies.retryDelaysMs[attempt - 1] ?? dependencies.retryDelaysMs.at(-1) ?? 0
         try {
-          await dependencies.sleep(delay, signal)
+          await raceWithSignal(dependencies.sleep(delay, signal), signal)
         } catch {
           return {
-            category: timeoutController.signal.aborted ? 'timeout' : 'cancelled',
+            category: deadline.timedOut() ? 'timeout' : 'cancelled',
           }
         }
       }
     }
     return { category: 'provider-error', phase: 'provider-request', attempts: dependencies.maxAttempts }
   } finally {
-    clearTimeout(timeout)
+    deadline.dispose()
   }
 }
 
-export function createPermissionReviewer(
+export function createSys2Reviewer(
   runtime: ReviewerRuntime,
   reviewerDependencies: ReviewerDependencies = {},
 ): ReviewAuthorizer {
   const dependencies = {
     now: reviewerDependencies.now ?? Date.now,
-    sleep: reviewerDependencies.sleep ?? defaultSleep,
-    maxAttempts: reviewerDependencies.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
-    retryDelaysMs: reviewerDependencies.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS,
+    sleep: reviewerDependencies.sleep ?? reviewSleep,
+    maxAttempts: reviewerDependencies.maxAttempts ?? REVIEW_MAX_ATTEMPTS,
+    retryDelaysMs: reviewerDependencies.retryDelaysMs ?? REVIEW_RETRY_DELAYS_MS,
   }
 
   return async (details, log) => {
@@ -394,9 +283,9 @@ export function createPermissionReviewer(
         requestId: details.requestId,
         toolCallId: details.toolCallId,
         toolName: details.toolName,
-        provider: runtime.config.provider,
-        model: runtime.config.model,
-        policy: 'model-review',
+        provider: runtime.config.sys2_provider,
+        model: runtime.config.sys2_model,
+        policy: 'sys2', reviewer: 'sys2',
         outcome: assessment.outcome,
         rationale: assessment.rationale,
         attempts,
